@@ -124,6 +124,7 @@ function modal({ title, body, wide = '', buttons = [], onOpen }) {
   const isTop = () => $$('.ov').pop() === ov;
   const close = () => { ov.remove(); document.removeEventListener('keydown', onKey); };
   const onKey = (e) => { if (e.key === 'Escape' && isTop()) { e.preventDefault(); close(); } };
+  $$('[data-close]', mb).forEach((a) => a.addEventListener('click', () => close())); // روابط بتقفل النافذة
   let primary = null;
   for (const b of buttons) {
     const el = document.createElement('button'); el.className = 'btn ' + (b.cls || ''); el.innerHTML = b.t;
@@ -567,10 +568,11 @@ function renderShell() {
     <nav>${NAV.filter(navOk).map((n) => (n.grp ? `<div class="grp">${n.grp}</div>` : `<a href="#/${n.id}" data-v="${n.id}">${icon(n.i)}${n.t}</a>`)).join('').replace(/<div class="grp">[^<]*<\/div>(?=<div class="grp">|$)/g, '')}</nav>
     <div class="me"><div class="row" style="flex-wrap:nowrap;gap:10px"><span class="avatar">${esc(initial(u.name))}</span><div style="min-width:0"><div style="color:#fff;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(u.name)}</div><div style="color:#7c8aa5">المدير العام · كل المعارض</div></div></div>
     <div class="row" style="margin-top:10px"><button class="btn sm" id="chpw">${icon('key')}كلمة المرور</button><button class="btn sm" id="logout">${icon('logout')}خروج</button></div></div></aside>
-    <div class="main"><header class="top"><button class="btn ghost menu-btn" id="menu">${icon('menu')}</button><div class="sp"><h2 id="vt"></h2><div class="sub">${arDate()}</div></div>${seg}<a class="btn" href="${BASE}cashier/" target="_blank" title="فتح شاشة الكاشير في تاب جديد">${icon('cart')}شاشة الكاشير</a><button class="btn ghost" data-theme-btn title="الوضع الليلي">${themeIcon()}</button><span class="clock num" data-clock></span></header><main class="content" id="view"></main></div></div>`;
+    <div class="main"><header class="top"><button class="btn ghost menu-btn" id="menu">${icon('menu')}</button><div class="sp"><h2 id="vt"></h2><div class="sub">${arDate()}</div></div>${seg}<button class="btn" id="camBtn" title="الكاميرات — افتح الكاميرات أو راجع التسجيل">📹 الكاميرات</button><a class="btn" href="${BASE}cashier/" target="_blank" title="فتح شاشة الكاشير في تاب جديد">${icon('cart')}شاشة الكاشير</a><button class="btn ghost" data-theme-btn title="الوضع الليلي">${themeIcon()}</button><span class="clock num" data-clock></span></header><main class="content" id="view"></main></div></div>`;
   $('#logout').onclick = logout;
   $('#chpw').onclick = () => changePassword(false);
   $('#menu').onclick = () => $('#side').classList.toggle('open');
+  if ($('#camBtn')) $('#camBtn').onclick = camListModal;
   $$('#brseg button').forEach((b) => (b.onclick = () => setBranch(b.dataset.b)));
   $$('[data-theme-btn]').forEach((b) => (b.onclick = toggleTheme));
   tickClock();
@@ -738,7 +740,53 @@ const actCols = (compact) => [
   { t: 'العميل / البيان', f: (r) => esc(r.party || '') + (r.notes && !compact ? `<div class="small faint">${esc(r.notes)}</div>` : ''), v: (r) => [r.party, r.notes].filter(Boolean).join(' — ') },
   { t: 'المبلغ', n: 1, f: (r) => M(r.dir < 0 ? -r.amount : r.amount, r.dir < 0 ? 'bad' : r.dir > 0 ? 'ok' : ''), v: (r) => (r.dir < 0 ? -r.amount : r.amount) },
   { t: 'طريقة الدفع', f: (r) => paysHTML(r.pays, r.type === 'sale' ? '<span class="badge warn">آجل</span>' : '') + (r.type === 'sale' && r.amount - r.paid > 0.009 && r.pays.length ? ` <span class="badge warn">آجل ${money(r.amount - r.paid)}</span>` : ''), v: (r) => r.pays.map((p) => `${mName(p.method)} ${p.amount}${p.ref ? ' #' + p.ref : ''}`).join(' + ') || 'آجل' },
+  ...camCol(),
 ];
+/* ---------- الكاميرات: مراجعة التسجيل وقت أي عملية ---------- */
+const camCfg = (br) => (S.settings.cameras || {})[br] || {};
+const camAny = () => Object.values(S.settings.cameras || {}).some((c) => c && (c.url || c.name));
+function camOpen(br) {
+  const c = camCfg(br);
+  if (c.url) { window.open(c.url, '_blank', 'noopener'); return true; }
+  toast('افتح تطبيق الكاميرات على الموبايل — أو حط رابط الكاميرات من الإعدادات ← الكاميرات', 'warn'); return false;
+}
+// date بصيغة 'YYYY-MM-DD HH:MM:SS' (توقيت المعرض) — offset = فرق ساعة جهاز التسجيل بالدقايق
+function camModal(br, date, what) {
+  const c = camCfg(br); const b = branchOf(br);
+  const [d, t] = String(date || '').split(' '); const [Y, Mo, D] = (d || '').split('-').map(Number); const [h, mi, s] = (t || '0:0:0').split(':').map(Number);
+  const at = new Date(Y, Mo - 1, D, h, mi, s || 0); at.setMinutes(at.getMinutes() + (+c.offset || 0));
+  const hm = (x) => x.toLocaleTimeString('ar-EG', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+  const from = new Date(at - 60e3), to = new Date(+at + 60e3);
+  const dayTxt = at.toLocaleDateString('ar-EG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  const plain = `${ymd(at)} ${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`;
+  modal({
+    title: '🎥 راجع الكاميرا وقت العملية',
+    body: `<div style="text-align:center">
+      <div class="small muted">${esc(what || 'عملية')} — ${brName(br) || esc(b.name || '')}</div>
+      <div style="font-size:15px;margin-top:10px">${esc(dayTxt)}</div>
+      <div class="num" style="font-size:40px;font-weight:800;margin:4px 0" dir="ltr">${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}</div>
+      <div class="small muted">ارجع في التسجيل من <b>${esc(hm(from))}</b> لـ <b>${esc(hm(to))}</b></div>
+      ${c.name ? `<div class="badge pri" style="margin-top:10px">📹 ${esc(c.name)}</div>` : ''}
+      ${c.offset ? `<div class="small faint" style="margin-top:8px">الوقت متعدّل ${c.offset > 0 ? '+' : ''}${c.offset} دقيقة على ساعة جهاز التسجيل</div>` : ''}
+      ${c.url ? '' : `<div class="small warn" style="margin-top:12px">افتح تطبيق الكاميرات وروح للوقت ده. (تقدر تحط رابط الكاميرات من <a href="#/settings" data-close>الإعدادات</a> عشان يتفتح بدوسة)</div>`}</div>`,
+    buttons: [
+      ...(c.url ? [{ t: '📹 افتح الكاميرات', cls: 'pri', fn: () => { camOpen(br); return false; } }] : []),
+      { t: '📋 نسخ الوقت', fn: () => { try { navigator.clipboard.writeText(plain); toast('اتنسخ: ' + plain, 'ok'); } catch {} return false; } },
+      { t: 'إغلاق' },
+    ],
+  });
+}
+const camCol = () => (isAdmin() ? [{ t: '', noCsv: 1, f: () => '<button class="btn ghost sm" data-act="cam" title="راجع الكاميرا وقت العملية">🎥</button>' }] : []);
+const actAct = (a, r) => { if (a === 'cam') camModal(r.branch_id, r.date, ((ACT_T[r.type] || [r.type])[0]) + (r.doc_no ? ' ' + r.doc_no : '') + (r.user_name ? ' — ' + r.user_name : '')); };
+function camListModal() {
+  modal({
+    title: '📹 الكاميرات',
+    body: `<div class="grid" style="gap:10px">${S.branches.map((b) => { const c = camCfg(b.id); return `<div class="row" style="padding:12px;border:1px solid var(--line, #e5e7eb);border-radius:10px"><span class="dot" style="background:${esc(b.color)}"></span><b>${esc(b.name)}</b>${c.name ? `<span class="small muted">${esc(c.name)}</span>` : ''}<span class="sp"></span>${c.url ? `<button class="btn pri sm" data-camo="${b.id}">افتح</button>` : '<span class="small faint">مفيش رابط</span>'}</div>`; }).join('')}
+      <div class="small muted">💡 من الحركة المباشرة أو أي فاتورة دوس 🎥 يطلعلك الوقت بالظبط اللي تراجعه في التسجيل. الروابط بتتظبط من <a href="#/settings" data-close>الإعدادات ← الكاميرات</a>.</div></div>`,
+    buttons: [{ t: 'إغلاق' }],
+  });
+  $$('[data-camo]').forEach((x) => (x.onclick = () => camOpen(+x.dataset.camo)));
+}
 const actClick = (r) => (r.type === 'sale' || r.type === 'return' ? saleModal(r.ref_id) : r.type === 'purchase' || r.type === 'purchase_return' ? purchaseModal(r.ref_id) : null);
 function methodCards(list) {
   const rows = list.filter((x) => Math.abs(x.v) > 0.009);
@@ -752,7 +800,7 @@ async function liveBlock(el, limit) {
     const d = await GET('/api/activity', bq());
     $('#lvM', el).innerHTML = methodCards(d.sales_by_method) + (d.credit > 0.009 ? stat('بيع آجل اليوم', M(d.credit, 'warn')) : '');
     const rows = d.rows.slice(0, limit || 1000);
-    mountTable($('#lvT', el), actCols(!!limit), rows, { click: actClick, empty: 'مفيش عمليات النهارده لسه', rowCls: (r) => (!first && !seen.has(r.k) ? 'fresh' : '') });
+    mountTable($('#lvT', el), actCols(!!limit), rows, { click: actClick, act: actAct, empty: 'مفيش عمليات النهارده لسه', rowCls: (r) => (!first && !seen.has(r.k) ? 'fresh' : '') });
     d.rows.forEach((r) => seen.add(r.k)); first = false;
     $('#lvUpd', el).textContent = 'آخر تحديث ' + new Date().toLocaleTimeString('en-GB').slice(0, 5);
     return true;
@@ -771,7 +819,7 @@ VIEWS.live = async (el) => {
     const d = await GET('/api/activity', bq({ date: st.date })); last = d;
     $('#lvM', el).innerHTML = methodCards(d.sales_by_method) + (d.credit > 0.009 ? stat('بيع آجل', M(d.credit, 'warn')) : '');
     mountTable($('#lvB', el), [{ t: 'الخزينة', f: (r) => mBadge(r.method) }, { t: 'داخل', n: 1, f: (r) => M(r.inflow, 'ok') }, { t: 'خارج', n: 1, f: (r) => M(r.outflow, 'bad') }, { t: 'الصافي', n: 1, f: (r) => `<b>${M(r.net)}</b>` }], d.by_method, { empty: 'لا توجد حركة' });
-    mountTable($('#lvT', el), actCols(false), d.rows, { click: actClick, empty: 'مفيش عمليات في اليوم ده' });
+    mountTable($('#lvT', el), actCols(false), d.rows, { click: actClick, act: actAct, empty: 'مفيش عمليات في اليوم ده' });
     $('#lvUpd', el).textContent = 'آخر تحديث ' + new Date().toLocaleTimeString('en-GB').slice(0, 5);
     return true;
   };
@@ -1085,6 +1133,7 @@ async function saleModal(id, onChange) {
       { t: `${icon('print')} طباعة`, cls: 'pri', fn: () => { printSale(s); return false; } },
       { t: 'طباعة A4', fn: () => { printSale(s, 'a4'); return false; } },
       { t: '💬 واتساب', fn: () => { sendSaleWhatsApp(s); return false; } },
+      ...(isAdmin() ? [{ t: '🎥 الكاميرا', fn: () => { camModal(s.branch_id, s.date, `${isSale ? 'فاتورة بيع' : 'مرتجع'} ${s.doc_no} — ${s.user_name || ''}`); return false; } }] : []),
       ...(isSale && s.status === 'ok' && can('returns') ? [{ t: 'عمل مرتجع', fn: (mb, close) => { close(); returnModal(s, onChange); } }] : []),
       ...(isAdmin() && s.status === 'ok' ? [{ t: 'إلغاء الفاتورة', cls: 'bad', fn: async (mb, close) => { const r = await promptBox('إلغاء الفاتورة', 'سبب الإلغاء (المخزون والخزينة هيرجعوا زي ما كانوا):'); if (r == null) return false; await POST(`/api/sales/${s.id}/void`, { reason: r }); toast('تم إلغاء الفاتورة', 'ok'); dropCache(); close(); onChange && onChange(); } }] : []),
       { t: 'إغلاق' },
@@ -2067,7 +2116,14 @@ VIEWS.settings = async (el) => {
       <div class="field"><label class="f">التليفون</label><input class="in" name="phone" value="${esc(b.phone)}" dir="ltr"></div><div class="field"><label class="f">مقاس الطباعة الافتراضي</label><select class="in" name="print_format">${opt('thermal', 'إيصال حراري 80مم', b.print_format)}${opt('a4', 'ورقة A4', b.print_format)}</select></div></div>
       <div class="field"><label class="f">العنوان</label><input class="in" name="address" value="${esc(b.address)}"></div><div class="field"><label class="f">تذييل الفاتورة</label><input class="in" name="receipt_footer" value="${esc(b.receipt_footer)}"></div>
       <button class="btn pri" data-save="${b.id}">حفظ</button></div></div>`).join('')}</div>
-    <div class="grid g2"><div class="card"><div class="hd">إعدادات عامة</div><div class="bd" id="gs">
+    <div class="card" style="margin-bottom:16px"><div class="hd">📹 الكاميرات</div><div class="bd" id="camset">
+      <p class="muted" style="margin-top:0">من أي عملية في الحركة المباشرة أو أي فاتورة دوس <b>🎥</b> يطلعلك الوقت بالظبط عشان تراجعه في تسجيل الكاميرات. الرابط اختياري: لو حطيته، زرار "افتح الكاميرات" هيفتحه على طول (صفحة جهاز التسجيل أو رابط التطبيق).</p>
+      <div class="grid g2">${brs.map((b) => { const c = (S.settings.cameras || {})[b.id] || {}; return `<div data-cam="${b.id}" style="padding:12px;border:1px solid var(--line, #e5e7eb);border-radius:10px"><div style="margin-bottom:8px"><span class="dot" style="background:${esc(b.color)}"></span><b>${esc(b.name)}</b></div>
+        <div class="field"><label class="f">رابط فتح الكاميرات (اختياري)</label><input class="in" name="url" value="${esc(c.url || '')}" dir="ltr" placeholder="http://192.168.1.64  أو رابط التطبيق"></div>
+        <div class="grid g2"><div class="field"><label class="f">كاميرا الكاشير</label><input class="in" name="name" value="${esc(c.name || '')}" placeholder="مثال: قناة 2 — فوق الكاشير"></div>
+        <div class="field"><label class="f">فرق ساعة التسجيل (دقايق)</label><input class="in" type="number" name="offset" value="${+c.offset || 0}" min="-720" max="720" step="1"></div></div></div>`; }).join('')}</div>
+      <div class="small faint" style="margin:8px 0 12px">💡 لو ساعة جهاز التسجيل سابقة 3 دقايق اكتب 3، ولو متأخرة 3 اكتب ‎-3، عشان الوقت اللي يطلعلك يبقى مظبوط على التسجيل.</div>
+      <button class="btn pri" id="camsave">حفظ إعدادات الكاميرات</button></div></div>    <div class="grid g2"><div class="card"><div class="hd">إعدادات عامة</div><div class="bd" id="gs">
       <div class="field"><label class="f">اسم الشركة (يظهر في الفواتير والتقارير)</label><input class="in" name="company_name" value="${esc(S.settings.company_name)}"></div>
       <label class="chk field"><input type="checkbox" name="allow_negative_stock" ${S.settings.allow_negative_stock ? 'checked' : ''}> السماح بالبيع لو الرصيد مش كفاية (رصيد بالسالب)</label>
       <div class="field"><label class="f">طرق الدفع المتاحة في الكاشير</label><div class="perm-grid" id="mth">${Object.entries(S.allMethods).map(([k, v]) => `<label class="chk"><input type="checkbox" data-mth="${k}" ${S.methods[k] ? 'checked' : ''} ${k === 'cash' ? 'disabled' : ''}> ${mBadge(k)}</label>`).join('')}</div></div>
@@ -2092,7 +2148,10 @@ VIEWS.settings = async (el) => {
     const box = $(`[data-b="${b.dataset.save}"]`, el);
     try { await PUT('/api/branches/' + b.dataset.save, fv(box)); toast('تم الحفظ', 'ok'); const me = await GET('/api/me'); S.branches = me.branches; renderShell(); route(); } catch (e) { toast(e.message, 'bad'); }
   }));
-  $('#gsave', el).onclick = async () => {
+  $('#camsave', el).onclick = async () => {
+    const cameras = {}; $$('[data-cam]', el).forEach((box) => { cameras[box.dataset.cam] = { url: $('[name=url]', box).value.trim(), name: $('[name=name]', box).value.trim(), offset: +$('[name=offset]', box).value || 0 }; });
+    try { await PUT('/api/settings', { cameras }); const me = await GET('/api/me'); S.settings = me.settings; toast('تم حفظ إعدادات الكاميرات', 'ok'); route(); } catch (e) { toast(e.message, 'bad'); }
+  };  $('#gsave', el).onclick = async () => {
     const v = fv($('#gs', el));
     v.expense_categories = $('#ec', el).value.split('\n').map((x) => x.trim()).filter(Boolean);
     v.units = $('#un', el).value.split('\n').map((x) => x.trim()).filter(Boolean);
