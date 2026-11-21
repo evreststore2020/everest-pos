@@ -2305,8 +2305,8 @@ const qStatus = (r) => (r.status === 'open' && r.expired ? '<span class="badge w
 VIEWS.quotes = async (el) => {
   const st = S.quoteSt || (S.quoteSt = { ...newRange('month'), status: 'open', q: '' });
   el.innerHTML = `<div class="toolbar"><div class="seg" id="qs">${[['open', 'المفتوحة'], ['converted', 'اتحولت فواتير'], ['cancelled', 'الملغية'], ['', 'الكل']].map(([k, t]) => `<button data-s="${k}" class="${st.status === k ? 'on' : ''}">${t}</button>`).join('')}</div>
-    <span id="qr" class="row" style="gap:6px">${rangeHTML(st)}</span><input class="in" id="qq" placeholder="رقم العرض أو اسم / موبايل العميل" value="${esc(st.q)}" style="width:220px"><span class="sp"></span><a class="btn pri" href="#/pos">${icon('plus')}عرض سعر جديد</a><button class="btn" id="csv">${icon('download')}Excel</button></div>
-    <p class="small muted" style="margin:0 0 12px">عرض السعر بيتعمل من شاشة البيع: ضيف الأصناف ودوس <b>"عرض سعر"</b> بدل الدفع. مش بيخصم من المخزون. لما العميل يوافق افتح العرض ودوس <b>"تحويل لفاتورة"</b>.</p>
+    <span id="qr" class="row" style="gap:6px">${rangeHTML(st)}</span><input class="in" id="qq" placeholder="رقم العرض أو اسم / موبايل العميل" value="${esc(st.q)}" style="width:220px"><span class="sp"></span>${can('documents') ? `<button class="btn pri" id="qnew">${icon('plus')}عرض سعر جديد</button><a class="btn" href="#/pos" title="ضيف الأصناف في شاشة البيع ودوس عرض سعر">${icon('cart')}من شاشة البيع</a>` : `<a class="btn pri" href="#/pos">${icon('plus')}عرض سعر جديد</a>`}<button class="btn" id="csv">${icon('download')}Excel</button></div>
+    <p class="small muted" style="margin:0 0 12px">${can('documents') ? '<b>"عرض سعر جديد"</b> بيفتح عرض رسمي على ورق الشركة تكتب فيه اللي انت عايزه (ويتحفظ في المطبوعات). <b>"من شاشة البيع"</b> للعرض السريع اللي بيتحول لفاتورة بضغطة. الاتنين مش بيخصموا من المخزون.' : 'عرض السعر بيتعمل من شاشة البيع: ضيف الأصناف ودوس <b>"عرض سعر"</b> بدل الدفع. مش بيخصم من المخزون. لما العميل يوافق افتح العرض ودوس <b>"تحويل لفاتورة"</b>.'}</p>
     <div class="grid g3" id="sum" style="margin-bottom:14px"></div><div id="tb"></div>`;
   let rows = [];
   const cols = [
@@ -2330,6 +2330,7 @@ VIEWS.quotes = async (el) => {
   $$('#qs button', el).forEach((b) => (b.onclick = () => { st.status = b.dataset.s; $$('#qs button', el).forEach((x) => x.classList.toggle('on', x === b)); load(); }));
   bindRange(el, st, load);
   $('#qq', el).oninput = debounce((e) => { st.q = e.target.value.trim(); load(); }, 300);
+  if ($('#qnew', el)) $('#qnew', el).onclick = () => docForm('quote', {}, null, () => toast('اتحفظ في المطبوعات ← الأرشيف', 'ok'));
   $('#csv', el).onclick = () => exportCSV('عروض-الأسعار', cols, rows);
   await load();
 };
@@ -2860,7 +2861,7 @@ const DOCS = {
       ${m.html}${totalsHTML(m.c, d)}${d.payment || d.delivery ? `<p style="margin-top:4mm">${d.payment ? `<b>طريقة الدفع:</b> ${esc(d.payment)}<br>` : ''}${d.delivery ? `<b>التسليم:</b> ${esc(d.delivery)}` : ''}</p>` : ''}
       ${termsHTML(d.terms)}<p class="closing">${esc(d.closing)}</p>${signsHTML([{ t: x.lh.sign_title || 'المدير العام', name: x.lh.sign_name }], 1)}`; } },
   delivery: { t: 'إذن تسليم بضاعة', ic: 'truck', tone: '#059669', d: 'البضاعة اللي خرجت للعميل أو الموقع — بتوقيع المستلم والسائق',
-    fields: [{ k: 'to', t: 'العميل / الجهة', req: 1, list: 'customers' }, { k: 'site', t: 'عنوان / موقع التسليم' }, { k: 'invoice', t: 'رقم الفاتورة (لو فيه)', ltr: 1, ph: 'مثال: J-00012', hint: 'اكتب رقم الفاتورة ودوس "استيراد" تحت عشان الأصناف تتملى لوحدها' },
+    fields: [{ k: 'to', t: 'العميل / الجهة', req: 1, list: 'customers' }, { k: 'site', t: 'عنوان / موقع التسليم' }, { k: 'invoice', t: 'رقم الفاتورة (لو فيه)', ltr: 1, ph: 'مثال: J-00012', hint: 'أو دوس "📥 هات بيانات من السيستم" ← فاتورة بيع، والأصناف تنزل لوحدها' },
       { k: 'driver', t: 'السائق / المندوب' }, { k: 'car', t: 'رقم السيارة' }, { k: 'receiver', t: 'اسم المستلم' }],
     items: { cols: [{ k: 'desc', t: 'الصنف', w: 260 }, { k: 'unit', t: 'الوحدة', w: 80 }, { k: 'qty', t: 'الكمية', num: 1, w: 70 }, { k: 'note', t: 'ملاحظات', w: 150 }], products: 1, invoice: 1 }, terms: 1, party: 'to', title: (d) => d.site,
     render: (d, x) => { const it = (d.items || []).filter((i) => String(i.desc || '').trim()); return `${titleHTML('إذن تسليم بضاعة', x.no, [['التاريخ', docDate(d.doc_date)], ['رقم الفاتورة', esc(d.invoice || '')]])}
@@ -2920,7 +2921,7 @@ const DOCS = {
       ${d.subject ? `<div class="subj">الموضوع: ${esc(d.subject)}</div>` : ''}<p>${esc(d.greet)}</p><div class="lead" style="line-height:2.1">${lines(d.body).map((p) => `<p>${esc(p)}</p>`).join('')}</div><p class="closing">${esc(d.closing)}</p>
       ${signsHTML([{ t: x.lh.sign_title || 'المدير العام', name: x.lh.sign_name }], 1)}` },
   return_note: { t: 'إذن مرتجع / استبدال', ic: 'layers', tone: '#b45309', d: 'العميل رجّع أو بدّل بضاعة — الأصناف والسبب وبتوقيع الطرفين',
-    fields: [{ k: 'to', t: 'العميل', req: 1, list: 'customers' }, { k: 'phone', t: 'الموبايل', ltr: 1 }, { k: 'invoice', t: 'رقم الفاتورة الأصلية', ltr: 1, hint: 'اكتب رقم الفاتورة ودوس "استيراد" عشان أصنافها تنزل' },
+    fields: [{ k: 'to', t: 'العميل', req: 1, list: 'customers' }, { k: 'phone', t: 'الموبايل', ltr: 1 }, { k: 'invoice', t: 'رقم الفاتورة الأصلية', ltr: 1, hint: 'أو دوس "📥 هات بيانات من السيستم" ← فاتورة بيع، وأصنافها تنزل' },
       { k: 'type', t: 'النوع', type: 'select', opts: ['مرتجع', 'استبدال', 'مرتجع واستبدال'] }, { k: 'refund', t: 'المبلغ المرتد للعميل (ج.م)', type: 'money' }, { k: 'refund_how', t: 'طريقة الرد', type: 'select', opts: ['نقداً', 'خصم من حساب العميل', 'رصيد للشراء لاحقاً', 'لا يوجد'] }],
     items: { cols: [{ k: 'desc', t: 'الصنف', w: 240 }, { k: 'qty', t: 'الكمية', num: 1, w: 70 }, { k: 'dir', t: 'مرتجع / بديل', w: 110, opts: ['مرتجع', 'بديل'] }, { k: 'note', t: 'السبب / الحالة', w: 170 }], products: 1, invoice: 1 }, terms: 1, party: 'to', amount: (d) => +d.refund || 0, title: (d) => d.type,
     render: (d, x) => { const it = (d.items || []).filter((i) => String(i.desc || '').trim()); return `${titleHTML('إذن ' + (d.type || 'مرتجع'), x.no, [['التاريخ', docDate(d.doc_date)], ['على فاتورة', esc(d.invoice || '')]])}
@@ -2929,6 +2930,16 @@ const DOCS = {
       ${+d.refund ? `<div class="tots"><div class="words">${esc(tafqit(d.refund))}</div><table class="tt"><tr class="g"><td>المبلغ المرتد (${esc(d.refund_how || '')})</td><td class="n">${money(d.refund)} ج.م</td></tr></table></div>` : ''}
       ${termsHTML(d.terms, 'الشروط')}${signsHTML([{ t: 'العميل', name: d.to }, { t: 'الموظف المختص', name: x.user }, { t: 'اعتماد المدير' }], 0)}`; } },
 };
+DOCS.free = { t: 'مستند حر', ic: 'letter', tone: '#0f766e', d: 'أي عنوان وأي كلام على ورق الشركة — بجدول أو من غيره، وتوقيعات تختارها انت',
+  fields: [{ k: 'doc_title', t: 'عنوان المستند', req: 1, ph: 'مثال: بيان أسعار / إذن صرف / شهادة / محضر استلام' }, { k: 'to', t: 'موجَّه إلى (اختياري)', list: 'customers', ph: 'مثال: شركة جبال للمقاولات' }, { k: 'attn', t: 'عناية (اختياري)' },
+    { k: 'subject', t: 'الموضوع (اختياري)', full: 1 }, { k: 'body', t: 'النص', type: 'textarea', full: 1, rows: 7, ph: 'اكتب أي كلام — كل سطر فقرة' },
+    { k: 'closing', t: 'الختام (اختياري)', ph: 'مثال: وتفضلوا بقبول فائق الاحترام،،،' }, { k: 'signs', t: 'التوقيعات (افصل بينهم بـ ،)', def: 'المستلم، المدير العام' }, { k: 'stamp', t: 'الختم', type: 'select', opts: ['مكان للختم', 'بدون ختم'] }],
+  items: { money: 1, products: 1 }, vat: 1, terms: 1, party: 'to', amount: (d) => docCalc(d).total, title: (d) => d.subject || d.doc_title,
+  render: (d, x) => { const c = docCalc(d); const priced = c.items.some((i) => +i.price); const m = c.items.length ? moneyTable(d, priced ? PRICE_COLS : PRICE_COLS.slice(0, 3)) : null;
+    const signs = String(d.signs || '').split(/[،,]/).map((s) => s.trim()).filter(Boolean).map((t) => ({ t }));
+    return `${titleHTML(d.doc_title || 'مستند', x.no, [['التاريخ', docDate(d.doc_date)]])}${d.to ? `<div class="to">السادة / <b>${esc(d.to)}</b>${d.attn ? `<br>عناية / ${esc(d.attn)}` : ''}</div>` : ''}
+      ${d.subject ? `<div class="subj">الموضوع: ${esc(d.subject)}</div>` : ''}<div class="lead" style="line-height:2">${lines(d.body).map((p) => `<p>${esc(p)}</p>`).join('')}</div>
+      ${m ? m.html + (priced ? totalsHTML(m.c, d) : '') : ''}${termsHTML(d.terms, 'ملاحظات')}${d.closing ? `<p class="closing">${esc(d.closing)}</p>` : ''}${signs.length || d.stamp !== 'بدون ختم' ? signsHTML(signs, d.stamp !== 'بدون ختم') : ''}`; } };
 const DEF_TERMS = {
   quote: 'الأسعار بالجنيه المصري وشاملة ضريبة القيمة المضافة.\nالعرض ساري حتى التاريخ المذكور، والأسعار قابلة للتغيير بعده حسب أسعار الشركات المنتجة.\nالكميات تقديرية، والمحاسبة على الكميات المسلَّمة فعلياً.\nالبضاعة المباعة لا تُرد إلا بحالتها الأصلية وخلال 14 يوماً من تاريخ الاستلام.',
   delivery: 'استلمت البضاعة الموضحة أعلاه كاملة وبحالة جيدة، وبالكميات المذكورة، ولا يحق لي الرجوع بأي نقص بعد التوقيع.',
@@ -2941,10 +2952,89 @@ const DEF_TERMS = {
 const docTerms = (k, lh) => (lh.terms && lh.terms[k] != null && lh.terms[k] !== '' ? lh.terms[k] : DEF_TERMS[k] || '');
 function docHTML(kind, d, meta) {
   const lh = meta.lh || {}; const br = branchOf(meta.branch_id || curBranch()) || {};
-  return `<div class="pg">${lh.watermark && lh.logo ? `<img class="wm" src="${esc(lh.logo)}" alt="">` : ''}${meta.void ? '<div class="void">ملغي</div>' : ''}${lhHeader(lh, br)}<div class="body">${DOCS[kind].render(d, { ...meta, lh })}</div>${lhFooter(lh, br)}</div>`;
+  let body = DOCS[kind].render(d, { ...meta, lh });
+  if (kind !== 'free' && String(d.doc_title || '').trim()) body = body.replace(/<h1>[^<]*<\/h1>/, `<h1>${esc(d.doc_title)}</h1>`); // عنوان مخصوص للورقة
+  return `<div class="pg">${lh.watermark && lh.logo ? `<img class="wm" src="${esc(lh.logo)}" alt="">` : ''}${meta.void ? '<div class="void">ملغي</div>' : ''}${lhHeader(lh, br)}<div class="body">${body}</div>${lhFooter(lh, br)}</div>`;
 }
 const docFrame = (html, lh) => `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><style>${docCSS(lh)}</style></head><body>${html}</body></html>`;
 const printDoc = (html, lh) => printHTML(html, false, docCSS(lh));
+
+/* ---------- هات بيانات من السيستم: بتملى المستند من فاتورة أو عرض سعر أو عميل أو مورد أو شيكات أو النواقص ---------- */
+function chooseFrom(title, list, label, sub, onPick, empty) {
+  const m = modal({ title, wide: 'wide', body: `<input class="in" id="chq" placeholder="ابحث…" autocomplete="off"><div id="chl" class="chlist"></div>`, buttons: [{ t: 'إلغاء' }] });
+  const render = () => { const q = $('#chq', m.mb).value.trim().toLowerCase(); const rows = list.filter((x) => !q || (label(x) + ' ' + (sub ? sub(x) : '')).toLowerCase().includes(q)).slice(0, 60);
+    $('#chl', m.mb).innerHTML = rows.length ? rows.map((x) => `<button type="button" data-i="${list.indexOf(x)}"><b>${esc(label(x))}</b><span class="small muted">${esc(sub ? sub(x) : '')}</span></button>`).join('') : `<div class="empty">${empty || 'مفيش نتايج'}</div>`; };
+  $('#chq', m.mb).oninput = debounce(render, 120);
+  $('#chl', m.mb).onclick = async (e) => { const b = e.target.closest('[data-i]'); if (!b) return; try { await onPick(list[+b.dataset.i]); m.close(); } catch (er) { toast(er.message, 'bad'); } };
+  render();
+}
+async function docImport(kind, spec, d, fields, sync) {
+  const has = (k) => fields.some((f) => f.k === k);
+  const pk = spec.party; const money1 = spec.items && spec.items.money;
+  const S_ = [];
+  if (['quote', 'delivery', 'cash_receipt', 'return_note', 'debt_ack', 'free', 'letter'].includes(kind)) S_.push(['sale', '🧾', 'فاتورة بيع', 'الأصناف والكميات والعميل من فاتورة']);
+  if (['quote', 'delivery', 'free', 'cash_receipt'].includes(kind)) S_.push(['qq', '📄', 'عرض سعر من الكاشير', 'الأصناف والأسعار والعميل من عرض سعر اتعمل في شاشة البيع']);
+  if (can('customers') && kind !== 'purchase_order') S_.push(['cust', '👤', 'عميل', kind === 'debt_ack' ? 'الاسم والموبايل والعنوان والمديونية' : 'الاسم والموبايل والعنوان']);
+  if ((can('suppliers') || can('purchases')) && ['purchase_order', 'authorization', 'letter', 'free', 'cash_receipt'].includes(kind)) S_.push(['supp', '🏭', 'مورد', 'اسم المورد وبياناته']);
+  if (kind === 'cheque_receipt' && can('treasury')) S_.push(['chq', '🏦', 'شيكات متسجلة', 'الشيكات اللي تحت التحصيل من عميل']);
+  if (spec.items && spec.items.products && ['purchase_order', 'free'].includes(kind)) S_.push(['low', '📦', 'النواقص', 'الأصناف اللي وصلت لحد الطلب بالكمية المقترحة']);
+  if (!S_.length) return toast('المستند ده بيتكتب بإيدك — مفيش بيانات تتجاب له من السيستم', 'warn');
+  const prodsP = products().catch(() => []);
+  const unitOf = (pr, id) => (pr.find((p) => p.id === id) || {}).unit || '';
+  const setParty = (name) => { if (!name) return; if (has(pk)) d[pk] = name; else if (has('to')) d.to = name; };
+  const fromLines = async (lines0, disc) => {
+    const pr = await prodsP;
+    if (spec.items) { const cols = (spec.items.cols || []).map((c) => c.k); d.items = lines0.map((i) => ({ desc: i.name, unit: i.unit || unitOf(pr, i.product_id), qty: i.qty, ...(money1 || cols.includes('price') ? { price: i.price } : {}), dir: 'مرتجع' })); }
+    if (money1 && disc) d.discount = disc;
+  };
+  const go = async (k) => {
+    if (k === 'sale') {
+      const list = await GET('/api/sales', bq({ kind: 'sale' })); const ok = list.filter((s) => s.status === 'ok');
+      return chooseFrom('اختار الفاتورة', ok, (s) => `${s.doc_no} — ${s.customer || 'عميل نقدي'}`, (s) => `${s.date.slice(0, 16)} · ${money(s.total)} ج.م${s.total - s.paid > 0.009 ? ` · آجل ${money(s.total - s.paid)}` : ''}`, async (s0) => {
+        const s = await GET('/api/sales/' + s0.id); await fromLines(s.items, s.discount); setParty(s.cust_name || s.customer_name || '');
+        if (has('invoice')) d.invoice = s.doc_no; if (has('phone') && s.cust_phone) d.phone = s.cust_phone;
+        if (kind === 'cash_receipt') { d.amount = s.paid || s.total; d.for = `قيمة فاتورة رقم ${s.doc_no}`; }
+        if (kind === 'debt_ack') { d.amount = r2(s.total - s.paid) || s.total; d.reason = `${s.total - s.paid > 0.009 ? 'باقي ' : ''}قيمة فاتورة رقم ${s.doc_no}`; }
+        if ((kind === 'free' || kind === 'letter') && has('subject') && !d.subject) d.subject = `فاتورة رقم ${s.doc_no}`;
+        sync(); toast(`اتجاب ${s.items.length} صنف من ${s.doc_no}`, 'ok');
+      }, 'مفيش فواتير في المعرض ده');
+    }
+    if (k === 'qq') {
+      const list = await GET('/api/quotes', bq({ status: '', from: '', to: '' })); const ok = list.filter((q) => q.status !== 'cancelled');
+      return chooseFrom('اختار عرض السعر', ok, (q) => `${q.doc_no} — ${q.customer}`, (q) => `${q.date.slice(0, 10)} · ${money(q.total)} ج.م · ${(Q_ST[q.status] || [q.status])[0]}`, async (q0) => {
+        const q = await GET('/api/quotes/' + q0.id); await fromLines(q.items, q.discount); setParty(q.cust_name || '');
+        if (has('phone') && q.cust_phone) d.phone = q.cust_phone; if (kind === 'quote') { d.valid = q.valid_until; if (q.notes && !d.subject) d.subject = q.notes; }
+        if (kind === 'cash_receipt') { d.amount = q.total; d.for = `مقدم / قيمة عرض السعر رقم ${q.doc_no}`; }
+        sync(); toast(`اتجاب عرض السعر ${q.doc_no}`, 'ok');
+      }, 'مفيش عروض أسعار');
+    }
+    if (k === 'cust' || k === 'supp') {
+      const list = k === 'cust' ? (await customers(true)).filter((c) => c.name !== 'عميل نقدي') : await suppliers(true);
+      return chooseFrom(k === 'cust' ? 'اختار العميل' : 'اختار المورد', list, (c) => c.name, (c) => `${c.phone || ''}${Math.abs(c.balance) > 0.009 ? ` · الرصيد ${money(c.balance)}` : ''}`, (c) => {
+        if (k === 'supp' && kind === 'authorization') d.to = c.name; else setParty(c.name);
+        if (has('phone') && c.phone) d.phone = c.phone; if (has('address') && c.address) d.address = c.address;
+        if (kind === 'debt_ack' && c.balance > 0) { d.amount = c.balance; if (!d.reason) d.reason = 'رصيد مديونية الحساب حتى تاريخه'; }
+        sync(); toast(`اتجابت بيانات ${c.name}`, 'ok');
+      }, 'مفيش أسماء مسجلة');
+    }
+    if (k === 'chq') {
+      const all = await GET('/api/cheques', bq({ status: 'pending', direction: 'in' })); const by = {};
+      for (const c of all) (by[c.party_name] = by[c.party_name] || []).push(c);
+      const groups = Object.entries(by).map(([name, list]) => ({ name, list }));
+      return chooseFrom('شيكات مين؟', groups, (g) => g.name, (g) => `${g.list.length} شيك · ${money(g.list.reduce((s, c) => s + c.amount, 0))} ج.م`, (g) => {
+        d.from = g.name; d.items = g.list.map((c) => ({ no: c.cheque_no || '', bank: c.bank || '', due: c.due_date, amount: c.amount })); sync(); toast(`اتضاف ${g.list.length} شيك`, 'ok');
+      }, 'مفيش شيكات تحت التحصيل');
+    }
+    if (k === 'low') {
+      const pr = await prodsP; const low = pr.filter((p) => p.min_stock > 0 && p.stock <= p.min_stock);
+      if (!low.length) return toast('مفيش أصناف وصلت لحد الطلب', 'ok');
+      d.items = d.items.filter((x) => String(x.desc || '').trim()); for (const p of low) d.items.push({ desc: p.name, unit: p.unit || '', qty: Math.max(1, r2(p.min_stock * 2 - p.stock)), price: kind === 'purchase_order' && p.cost != null ? p.cost : '' });
+      sync(); toast(`اتضاف ${low.length} صنف — الكمية المقترحة ضعف حد الطلب ناقص الرصيد، عدّلها براحتك`, 'ok');
+    }
+  };
+  const m = modal({ title: '📥 هات بيانات من السيستم', body: `<p class="small muted" style="margin-top:0">اختار مصدر البيانات — هتنزل في المستند وتقدر تعدّل أي حاجة بعدها براحتك.</p><div class="impsrc">${S_.map(([k, ic, t, s]) => `<button type="button" data-k="${k}"><span>${ic}</span><b>${t}</b><small>${s}</small></button>`).join('')}</div>`, buttons: [{ t: 'إلغاء' }] });
+  $$('[data-k]', m.mb).forEach((b) => (b.onclick = async () => { m.close(); try { await go(b.dataset.k); } catch (e) { toast(e.message, 'bad'); } }));
+}
 
 /* ---------- نموذج المستند: خانات على اليمين ومعاينة حية للورقة على الشمال ---------- */
 async function docForm(kind, init = {}, existing = null, onDone) {
@@ -2952,7 +3042,9 @@ async function docForm(kind, init = {}, existing = null, onDone) {
   if (!existing && !_br && !curBranch()) return toast('اختار المعرض من فوق الأول', 'bad');
   const spec = DOCS[kind]; const lh = await loadLH(); const br = existing ? existing.branch_id : _br || curBranch();
   const d = { doc_date: ymd(new Date()), items: [], terms: spec.terms ? docTerms(kind, lh) : '', vat: false, vat_rate: 14, discount: 0, ...(existing ? existing.data : {}), ...init0 };
-  for (const f of spec.fields) if (d[f.k] == null) d[f.k] = typeof f.def === 'function' ? f.def() : f.def ?? (f.type === 'select' ? f.opts[0] : '');
+  // كل مستند تقدر تغيّر عنوانه في الورقة (غير المستند الحر اللي العنوان فيه أساسي)
+  const fields = kind === 'free' ? spec.fields : [...spec.fields, { k: 'doc_title', t: 'عنوان الورقة (اختياري)', ph: `سيبه فاضي = "${spec.t}"` }];
+  for (const f of fields) if (d[f.k] == null) d[f.k] = typeof f.def === 'function' ? f.def() : f.def ?? (f.type === 'select' ? f.opts[0] : '');
   if (spec.items && !d.items.length) d.items = [{}, {}, {}];
   const fieldHTML = (f) => {
     const v = d[f.k] ?? ''; let inp;
@@ -2964,11 +3056,10 @@ async function docForm(kind, init = {}, existing = null, onDone) {
   const icols = spec.items ? spec.items.cols || [{ k: 'desc', t: 'البيان / الصنف', w: 250 }, { k: 'unit', t: 'الوحدة', w: 75 }, { k: 'qty', t: 'الكمية', num: 1, w: 70 }, { k: 'price', t: 'السعر', num: 1, w: 95 }] : [];
   const m = modal({ title: `${existing ? 'تعديل' : 'جديد:'} ${spec.t}${existing ? ' ' + existing.doc_no : ''}`, wide: 'xwide', body: `<div class="docf"><div class="docform">
       ${spec.hint ? `<div class="card small" style="padding:8px 12px;margin-bottom:10px;background:var(--warn-soft);border-color:#fde68a">${spec.hint}</div>` : ''}
-      <div class="grid g2" style="gap:0 12px"><div class="field"><label class="f">التاريخ</label><input class="in" type="date" data-f="doc_date" value="${esc(d.doc_date)}"></div>${spec.fields.map(fieldHTML).join('')}</div>
-      ${spec.items ? `<div class="row" style="margin:6px 0"><b>${spec.items.money ? 'البنود والأسعار' : kind === 'cheque_receipt' ? 'الشيكات' : 'الأصناف'}</b><span class="sp"></span>
-        ${spec.items.products ? `<div style="position:relative;width:230px"><input class="in sm" id="dpp" placeholder="➕ أضف صنف من المخزن (بحث)" autocomplete="off"></div>` : ''}
-        ${spec.items.low ? '<button class="btn sm" id="dlow" title="الأصناف اللي وصلت لحد الطلب">📦 املأ من النواقص</button>' : ''}
-        ${spec.items.invoice ? '<button class="btn sm" id="dinv">⤓ استيراد من الفاتورة</button>' : ''}${spec.items.cheques && can('treasury') ? '<button class="btn sm" id="dchq">⤓ من الشيكات المسجلة</button>' : ''}</div>
+      <div class="impbar"><button class="btn pri sm" id="dimp" type="button">📥 هات بيانات من السيستم</button><span class="small muted">أو اكتب كل حاجة بإيدك — كل الخانات حرة ومش لازم تبقى من السيستم</span></div>
+      <div class="grid g2" style="gap:0 12px"><div class="field"><label class="f">التاريخ</label><input class="in" type="date" data-f="doc_date" value="${esc(d.doc_date)}"></div>${fields.map(fieldHTML).join('')}</div>
+      ${spec.items ? `<div class="row" style="margin:6px 0"><b>${spec.items.money ? (kind === 'free' ? 'جدول (اختياري — سيبه فاضي لو مش محتاجه)' : 'البنود والأسعار') : kind === 'cheque_receipt' ? 'الشيكات' : 'الأصناف'}</b><span class="sp"></span>
+        ${spec.items.products ? `<div style="position:relative;width:230px"><input class="in sm" id="dpp" placeholder="➕ أضف صنف من المخزن (بحث)" autocomplete="off"></div>` : ''}</div>
         <div class="tbl-wrap" style="max-height:34vh"><table class="t" style="table-layout:auto"><thead><tr><th style="width:28px;padding:8px 6px">#</th>${icols.map((c) => `<th style="width:${c.w}px;padding:8px 4px">${c.t}</th>`).join('')}${spec.items.money ? '<th class="n" style="padding:8px 6px">الإجمالي</th>' : ''}<th style="width:34px;padding:8px 4px"></th></tr></thead><tbody id="dit"></tbody></table></div>
         <div class="row" style="margin:6px 0"><button class="btn sm" id="dadd">${icon('plus')}سطر</button><span class="sp"></span><span id="dsum" class="small"></span></div>
         ${spec.items.money ? `<div class="grid g3" style="gap:0 12px"><div class="field"><label class="f">خصم (ج.م)</label><input class="in" type="number" step="any" min="0" data-f="discount" value="${esc(d.discount || '')}"></div>${spec.vat ? `<label class="chk" style="align-self:end;margin-bottom:12px"><input type="checkbox" data-f="vat" ${d.vat ? 'checked' : ''}> إضافة ضريبة قيمة مضافة</label><div class="field"><label class="f">نسبة الضريبة %</label><input class="in" type="number" step="any" data-f="vat_rate" value="${esc(d.vat_rate)}"></div>` : ''}</div>` : ''}` : ''}
@@ -3005,30 +3096,13 @@ async function docForm(kind, init = {}, existing = null, onDone) {
     const prods = await products().catch(() => []);
     picker($('#dpp', mb), { items: () => prods, match: (p, q) => prodMatch(p, q), label: (p) => esc(p.name), sub: (p) => `${money(spec.items.cost && p.cost != null ? p.cost : p.price)} · متاح ${qf(p.stock)}`,
       onPick: (p) => { $('#dpp', mb).value = ''; addItem({ desc: p.name, unit: p.unit || '', qty: 1, price: spec.items.cost ? (p.cost != null ? p.cost : '') : p.price, dir: 'مرتجع' }); } });
-    if ($('#dlow', mb)) $('#dlow', mb).onclick = () => { const low = prods.filter((p) => p.min_stock > 0 && p.stock <= p.min_stock); if (!low.length) return toast('مفيش أصناف وصلت لحد الطلب', 'ok'); d.items = d.items.filter((x) => String(x.desc || '').trim()); for (const p of low) d.items.push({ desc: p.name, unit: p.unit || '', qty: Math.max(1, r2(p.min_stock * 2 - p.stock)), price: p.cost != null ? p.cost : '' }); renderItems(); preview(); toast(`اتضاف ${low.length} صنف — الكمية المقترحة ضعف حد الطلب ناقص الرصيد، عدّلها براحتك`, 'ok'); };
   }
-  if ($('#dinv', mb)) $('#dinv', mb).onclick = async () => {
-    const no = String(d.invoice || '').trim(); if (!no) return toast('اكتب رقم الفاتورة الأول', 'bad');
-    try {
-      const list = await GET('/api/sales', bq({ q: no, kind: 'sale' })); const s0 = list.find((x) => x.doc_no.toLowerCase() === no.toLowerCase() || String(x.no) === no.replace(/\D/g, '').replace(/^0+/, '')) || list[0];
-      if (!s0) return toast('مالقيتش فاتورة بالرقم ده (بيدور في فواتير المعرض الحالي)', 'bad');
-      const s = await GET('/api/sales/' + s0.id); const pr = await products().catch(() => []);
-      d.items = s.items.map((i) => ({ desc: i.name, unit: (pr.find((p) => p.id === i.product_id) || {}).unit || '', qty: i.qty, dir: 'مرتجع' })); d.invoice = s.doc_no;
-      if (!d.to) d.to = s.cust_name || s.customer_name || ''; if (kind === 'return_note' && !d.phone) d.phone = s.cust_phone || '';
-      $$('[data-f]', mb).forEach((i) => { if (i.type !== 'checkbox' && d[i.dataset.f] != null && i.value !== String(d[i.dataset.f])) i.value = d[i.dataset.f]; });
-      renderItems(); preview(); toast(`اتستورد ${s.items.length} صنف من ${s.doc_no}`, 'ok');
-    } catch (e) { toast(e.message, 'bad'); }
-  };
-  if ($('#dchq', mb)) $('#dchq', mb).onclick = async () => {
-    const all = await GET('/api/cheques', bq({ status: 'pending', direction: 'in' })).catch(() => []);
-    const mine = d.from ? all.filter((c) => (c.party_name || '').includes(d.from.trim()) || d.from.includes(c.party_name || '~')) : all;
-    if (!mine.length) return toast(d.from ? `مفيش شيكات تحت التحصيل باسم "${d.from}"` : 'مفيش شيكات تحت التحصيل', 'bad');
-    d.items = mine.map((c) => ({ no: c.cheque_no || '', bank: c.bank || '', due: c.due_date, amount: c.amount })); if (!d.from) { d.from = mine[0].party_name; $('[data-f=from]', mb).value = d.from; }
-    renderItems(); preview(); toast(`اتضاف ${mine.length} شيك`, 'ok');
-  };
+  // ===== "هات بيانات من السيستم": فاتورة / عرض سعر / عميل / مورد / شيكات / نواقص =====
+  const sync = () => { $$('[data-f]', mb).forEach((i) => { const v = d[i.dataset.f]; if (i.type === 'checkbox') i.checked = !!v; else if (v != null && i.value !== String(v)) i.value = v; }); renderItems(); preview(); };
+  $('#dimp', mb).onclick = () => docImport(kind, spec, d, fields, sync);
   // قوائم العملاء والموردين (للاقتراح وهو بيكتب) + ملء بيانات العميل
   const custs = can('customers') ? await customers().catch(() => []) : [], supps = can('suppliers') || can('purchases') ? await suppliers().catch(() => []) : [];
-  for (const f of spec.fields.filter((x) => x.list)) {
+  for (const f of fields.filter((x) => x.list)) {
     const list = f.list === 'customers' ? custs.filter((c) => c.name !== 'عميل نقدي') : supps; const dl = $(`#dl-${f.k}`, mb); if (dl) dl.innerHTML = list.map((c) => `<option value="${esc(c.name)}">`).join('');
     $(`[data-f=${f.k}]`, mb).addEventListener('change', (e) => {
       const c = list.find((x) => x.name === e.target.value.trim()); if (!c) return;
@@ -3039,7 +3113,7 @@ async function docForm(kind, init = {}, existing = null, onDone) {
     });
   }
   const save = async (print) => {
-    for (const f of spec.fields) if (f.req && !String(d[f.k] ?? '').trim()) throw new Error(`اكتب "${f.t}"`);
+    for (const f of fields) if (f.req && !String(d[f.k] ?? '').trim()) throw new Error(`اكتب "${f.t}"`);
     if (spec.items) d.items = d.items.filter((x) => Object.values(x).some((v) => String(v ?? '').trim()));
     const body = { kind, branch_id: br, doc_date: d.doc_date, party: d[spec.party] || '', title: spec.title ? spec.title(d) || '' : '', ...(spec.amount ? { amount: spec.amount(d) } : {}), data: d };
     const r = existing ? await PUT('/api/documents/' + existing.id, body) : await POST('/api/documents', body);

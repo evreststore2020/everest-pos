@@ -344,6 +344,13 @@ tr.fresh td{animation:flash 2.5s ease-out}
 .lgslot img{max-width:100%;max-height:100%;object-fit:contain}.lgslot [data-rm]{position:absolute;top:2px;left:2px;padding:2px 6px;background:var(--card)}
 .lgslot:hover{border-color:var(--pri)}
 @media (max-width:1100px){.docf{grid-template-columns:minmax(0,1fr)}.docprev{position:static}}
+.impbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;margin-bottom:12px;border-radius:12px;background:var(--pri-soft);border:1px dashed color-mix(in srgb,var(--pri) 40%,transparent)}
+.impsrc{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px}
+.impsrc button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:right;border:1px solid var(--line);background:var(--card);border-radius:12px;padding:12px;cursor:pointer;color:var(--ink);font:inherit}
+.impsrc button:hover{border-color:var(--pri);box-shadow:var(--sh)}.impsrc span{font-size:22px}.impsrc b{font-size:14px}.impsrc small{color:var(--ink3);font-size:11.5px;line-height:1.5}
+.chlist{display:flex;flex-direction:column;gap:4px;margin-top:10px;max-height:55vh;overflow:auto}
+.chlist button{display:flex;justify-content:space-between;gap:12px;align-items:center;text-align:right;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:9px 12px;cursor:pointer;color:var(--ink);font:inherit}
+.chlist button:hover{border-color:var(--pri);background:var(--pri-soft)}
 /* شريط "من عرض سعر" فوق الفاتورة */
 .qbar{display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--pri-soft);border-bottom:1px solid var(--line);font-size:13px;font-weight:700;color:var(--pri)}
 
