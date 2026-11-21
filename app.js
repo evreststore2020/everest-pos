@@ -440,20 +440,34 @@ window.addEventListener('popstate', () => { S.mode = pathMode(); if (S.user) { r
 /* ---------- توقيع الشركة المنفّذة: داش ---------- */
 const DASH_MARK = (h = 28, one = '#6c5ce7', two = '#ff5c4d') => `<svg viewBox="0 0 64 48" height="${h}" aria-hidden="true" style="display:block;flex:none"><path d="M18 0h14L14 48H0z" fill="${one}"/><path d="M42 0h14L38 48H24z" fill="${two}"/></svg>`;
 const DASH_WORD = (dark) => `<span dir="ltr" style="font:800 1.25em/1 ui-monospace,Consolas,'Courier New',monospace;letter-spacing:-.5px"><span style="color:#6c5ce7">D</span><span style="color:${dark ? '#fff' : '#14141f'}">a</span><span style="color:#6c5ce7">S</span><span style="color:${dark ? '#fff' : '#14141f'}">h</span></span>`;
+// بانر الشركة كامل مع وسائل التواصل (نفس شكل تصميم داش)
+const DASH_CONTACT = { email: 'dashtechonlogy@gmail.com', phones: ['0101 121 3950', '0128 063 9874'] };
+function dashBanner() {
+  const ic = (d) => `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#ff6b5e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none">${d}</svg>`;
+  const mail = ic('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>');
+  const tel = ic('<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/>');
+  const chip = (href, icon, text) => `<a href="${href}" dir="ltr" style="display:inline-flex;align-items:center;gap:9px;padding:10px 16px;border:1px solid rgba(255,255,255,.16);border-radius:6px;color:#e5e7f0;text-decoration:none;font-size:15px;white-space:nowrap;background:rgba(255,255,255,.02)">${icon}<span>${text}</span></a>`;
+  return `<div class="dash-banner" style="display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;padding:18px 22px;border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#fff;background:linear-gradient(90deg,#2e1f2c 0%,#2a2236 55%,#24203a 100%)">
+    <div style="display:flex;align-items:center;gap:14px">${DASH_MARK(48)}
+      <div style="line-height:1.55"><div style="font-size:13px;color:#a9a3b8">تم التصميم والتطوير بواسطة</div>
+        <div style="display:flex;align-items:baseline;gap:10px;font-size:21px">${DASH_WORD(true)}<span style="font-size:17px">داش تكنولوجي</span></div>
+        <div style="font-size:13px;color:#a9a3b8">من الفكرة للإطلاق.. بسرعة <span dir="ltr">Idea to launch. Fast.</span></div></div></div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">${DASH_CONTACT.phones.map((p) => chip('tel:+2' + p.replace(/\s/g, ''), tel, p)).join('')}${chip('mailto:' + DASH_CONTACT.email, mail, DASH_CONTACT.email)}</div></div>`;
+}
 // شريط "تصميم وتنفيذ شركة داش" (dark = على خلفية غامقة)
 function dashCredit(dark, big) {
   const sub = dark ? '#a9b4cc' : '#64748b';
   return `<div class="dash-credit" style="display:flex;align-items:center;justify-content:center;gap:${big ? 14 : 10}px;flex-wrap:wrap">
     ${DASH_MARK(big ? 52 : 22)}
     <div style="line-height:1.4;text-align:right"><div style="font-size:${big ? 14 : 11.5}px;color:${sub}">تم تصميم وتنفيذ هذا النظام بواسطة</div>
-      <div style="display:flex;align-items:baseline;gap:10px;font-size:${big ? 26 : 14}px">${DASH_WORD(dark)}<b style="color:${dark ? '#fff' : '#14141f'}">شركة داش</b></div>
+      <div style="display:flex;align-items:baseline;gap:10px;font-size:${big ? 26 : 14}px">${DASH_WORD(dark)}<b style="color:${dark ? '#fff' : '#14141f'}">داش تكنولوجي</b></div>
       ${big ? `<div style="font-size:14px;color:#ff7a6e">من الفكرة للإطلاق.. بسرعة</div>` : ''}</div></div>`;
 }
 function renderChoice() {
   document.title = 'اختار الشاشة';
   const company = S.settings.company_name || 'برنامج الكاشير والمحاسبة';
   $('#app').innerHTML = `<div class="portal"><div class="portal-in">
-    <div style="display:flex;justify-content:center;margin-bottom:26px"><div style="padding:12px 20px;border-radius:16px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12)">${dashCredit(true, true)}</div></div>
+    <div style="margin-bottom:28px">${dashBanner()}</div>
     <div style="text-align:center;margin-bottom:26px"><span class="logo" style="margin:0 auto 14px;width:56px;height:56px">${icon('roller')}</span><h1>أهلاً بيك</h1><p>اختار الشاشة اللي عايز تدخل عليها</p></div>
     <div class="portal-cards">
       <a class="pcard2 owner" href="${BASE}admin/" data-m="admin"><div class="pi">👑</div><b>المدير العام</b><span>لوحة التحكم، الحركة المباشرة، الأرباح والتقارير، المشتريات والخزينة، المستخدمين والإعدادات</span><em>دخول المدير ←</em></a>
@@ -693,7 +707,8 @@ VIEWS.dashboard = async (el) => {
     <div class="grid g2">
       <div class="card"><div class="hd">آخر الفواتير<span class="sp"></span><a class="btn sm" href="#/sales">الكل</a></div><div id="rc"></div></div>
       <div class="card"><div class="hd">نواقص (وصلت لحد الطلب) <span class="badge bad">${d.low_stock_count}</span><span class="sp"></span><a class="btn sm" href="#/products">الأصناف</a></div><div id="ls"></div></div>
-    </div>`;
+    </div>
+    <div style="margin-top:18px">${dashBanner()}</div>`;
   const max = Math.max(1, ...d.chart.map((x) => x.v));
   $('#ch', el).innerHTML = `<div class="bars">${d.chart.map((x) => `<div class="b" title="${x.d}: ${money(x.v)}"><span class="num" style="font-size:10px">${x.v ? Math.round(x.v).toLocaleString('en-US') : ''}</span><i style="height:${Math.max(1, (x.v / max) * 120)}px"></i><span>${x.d.slice(8)}/${x.d.slice(5, 7)}</span></div>`).join('')}</div>`;
   if (S.branch) mountTable($('#bb', el), [{ t: 'الصنف', k: 'name' }, { t: 'الكمية', n: 1, f: (r) => Q(r.qty) }, { t: 'القيمة', n: 1, f: (r) => M(r.v) }], d.top, { empty: 'لا توجد مبيعات بعد' });
