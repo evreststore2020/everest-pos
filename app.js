@@ -1518,12 +1518,84 @@ function importProducts(onDone) {
 /* =====================================================================
    الجرد
    ===================================================================== */
+/* ---------- الجرد من شيت Excel ---------- */
+async function loadXLSX() {
+  if (window.XLSX) return;
+  await new Promise((res, rej) => { const s = document.createElement('script'); s.src = BASE + 'vendor/xlsx/xlsx.full.min.js'; s.onload = res; s.onerror = () => rej(new Error('تعذر تحميل أداة Excel')); document.head.append(s); });
+}
+const xNorm = (v) => String(v ?? '').trim().replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/\.0+$/, '');
+const xName = (v) => String(v ?? '').toLowerCase().replace(/[ً-ْـ]/g, '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/[\s\-_.,()/\\]+/g, '');
+const xNum = (v) => { if (v === '' || v == null) return null; if (typeof v === 'number') return v; const s = xNorm(v).replace(/٫/g, '.').replace(/[,،]/g, '.').replace(/[^\d.\-]/g, ''); return s === '' || isNaN(+s) ? NaN : +s; };
+// شيت فيه كل أصناف المعرض: الكود + الاسم + الرصيد بالدفتر + خانة فاضية للكمية الفعلية
+async function stockSheetDownload(prods) {
+  await loadXLSX();
+  const b = branchOf(curBranch());
+  const rows = [['الكود', 'الصنف', 'الشركة', 'التصنيف', 'الوحدة', 'الرصيد بالدفتر', 'الكمية الفعلية (الجرد)'],
+    ...prods.map((p) => [String(p.code || ''), p.name, brandLabel(p.brand), p.category || '', p.unit || '', +p.stock || 0, ''])];
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [{ wch: 10 }, { wch: 44 }, { wch: 12 }, { wch: 18 }, { wch: 9 }, { wch: 14 }, { wch: 22 }];
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'الجرد'); wb.Workbook = { Views: [{ RTL: true }] };
+  XLSX.writeFile(wb, `جرد ${b.name || ''} ${ymd(new Date())}.xlsx`);
+}
+// بيقرا أي شيت فيه عمود كود (أو اسم الصنف) + عمود كمية، ويطابقه على أصناف المعرض
+async function stockSheetRead(file, prods) {
+  await loadXLSX();
+  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+  const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '', raw: true });
+  const find = (cells, re) => cells.findIndex((c) => re.test(String(c)));
+  let hr = -1, cCode = -1, cName = -1, cQty = -1, cBar = -1;
+  for (let i = 0; i < Math.min(15, aoa.length) && hr < 0; i++) {
+    const cells = aoa[i].map((c) => String(c).trim());
+    let q = find(cells, /جرد|فعلي|فعليه|actual|count/i); if (q < 0) q = find(cells, /^(الكميه|الكمية|كمية|كميه|العدد|عدد|qty|quantity)$/i); if (q < 0) q = find(cells, /رصيد|stock/i);
+    if (q < 0) continue;
+    hr = i; cQty = q; cCode = find(cells, /^(الكود|كود|كود الصنف|code|sku)$/i); cBar = find(cells, /باركود|barcode/i); cName = find(cells, /صنف|اسم|البيان|name|item/i);
+  }
+  if (hr < 0) throw new Error('مش لاقي عمود الكمية في الشيت — لازم يكون فيه عمود اسمه "الكمية الفعلية" أو "الجرد" أو "الكمية"');
+  if (cCode < 0 && cName < 0 && cBar < 0) throw new Error('مش لاقي عمود الكود أو اسم الصنف في الشيت');
+  const byCode = new Map(), byBar = new Map(), byName = new Map();
+  for (const p of prods) { if (p.code) byCode.set(xNorm(p.code), p); if (p.barcode) byBar.set(xNorm(p.barcode), p); byName.set(xName(p.name), p); }
+  const found = new Map(); const missing = []; const bad = []; let empty = 0, dup = 0;
+  for (let i = hr + 1; i < aoa.length; i++) {
+    const r = aoa[i]; if (!r || r.every((c) => String(c).trim() === '')) continue;
+    const q = xNum(r[cQty]); if (q == null) { empty++; continue; }
+    const code = cCode >= 0 ? xNorm(r[cCode]) : '', bar = cBar >= 0 ? xNorm(r[cBar]) : '', name = cName >= 0 ? String(r[cName]).trim() : '';
+    const p = (code && byCode.get(code)) || (bar && byBar.get(bar)) || (code && byBar.get(code)) || (name && byName.get(xName(name)));
+    if (!p) { missing.push({ row: i + 1, code: code || bar, name }); continue; }
+    if (isNaN(q) || q < 0) { bad.push({ row: i + 1, name: p.name, v: r[cQty] }); continue; }
+    if (found.has(p.id)) dup++;
+    found.set(p.id, r3(q));
+  }
+  return { found, missing, bad, empty, dup };
+}
+const r3 = (x) => Math.round((+x || 0) * 1000) / 1000;
 VIEWS.stock = async (el) => {
   if (!needBranch(el)) return;
   const prods = await products(true);
   const counted = {};
   el.innerHTML = `<div class="card" style="padding:12px 16px;margin-bottom:14px"><b>الجرد الفعلي:</b> <span class="muted">اكتب الكمية الموجودة فعلاً على الرف لكل صنف (سيب الخانة فاضية لو مفيش تغيير). الفرق بيتسجل كعجز أو زيادة مخزون في الأرباح والخسائر.</span></div>
-    <div class="toolbar"><input class="in" id="sq" placeholder="بحث" style="width:240px"><label class="chk"><input type="checkbox" id="sch"> المعدّل فقط</label><span class="sp"></span><input class="in" id="sn" placeholder="ملاحظات الجرد" style="width:220px"><button class="btn pri" id="ssave">حفظ الجرد</button></div><div id="stb"></div>`;
+    <div class="toolbar"><input class="in" id="sq" placeholder="بحث" style="width:240px"><label class="chk"><input type="checkbox" id="sch"> المعدّل فقط</label><button class="btn" id="xdl" title="شيت Excel فيه كل أصناف المعرض — املا عمود الكمية الفعلية">${icon('download')}شيت الجرد (Excel)</button><button class="btn" id="xup" title="ارفع الشيت بعد ما تملاه">📥 استيراد من Excel</button><input type="file" id="xfile" accept=".xlsx,.xls,.csv" hidden><span class="sp"></span><input class="in" id="sn" placeholder="ملاحظات الجرد" style="width:220px"><button class="btn pri" id="ssave">حفظ الجرد</button></div><div id="stb"></div>`;
+  $('#xdl', el).onclick = async () => { try { await stockSheetDownload(prods); toast('اتنزّل الشيت — املا عمود "الكمية الفعلية" وارفعه', 'ok'); } catch (e) { toast(e.message, 'bad'); } };
+  $('#xup', el).onclick = () => $('#xfile', el).click();
+  $('#xfile', el).onchange = async (e) => {
+    const file = e.target.files[0]; e.target.value = ''; if (!file) return;
+    try {
+      const r = await stockSheetRead(file, prods);
+      for (const [id, q] of r.found) counted[id] = q;
+      const changed = [...r.found].filter(([id, q]) => { const p = prods.find((x) => x.id === id); return p && r2(q - p.stock) !== 0; }).length;
+      if (r.found.size) { $('#sch', el).checked = true; if (!$('#sn', el).value) $('#sn', el).value = 'جرد من شيت ' + file.name; }
+      render();
+      const list = (a, f) => `<div class="tbl-wrap" style="max-height:30vh;margin-top:6px"><table class="t"><tbody>${a.slice(0, 50).map(f).join('')}</tbody></table></div>${a.length > 50 ? `<div class="small faint">و${a.length - 50} كمان…</div>` : ''}`;
+      modal({
+        title: '📥 نتيجة استيراد الجرد',
+        body: `<div class="grid g3" style="margin-bottom:10px">${stat('أصناف اتقرت', `<b class="num">${r.found.size}</b>`, `منهم ${changed} فيهم فرق`)}${stat('صفوف من غير كمية', `<b class="num">${r.empty}</b>`, 'اتسابت زي ما هي')}${stat('مش متعرّف عليها', `<b class="num ${r.missing.length ? 'bad' : ''}">${r.missing.length}</b>`, 'كود أو اسم مش موجود')}</div>
+          ${r.missing.length ? `<b class="bad small">أصناف في الشيت مش لاقيها في ${esc(branchOf(curBranch()).name || 'المعرض')}:</b>${list(r.missing, (m) => `<tr><td class="num small">صف ${m.row}</td><td class="num">${esc(m.code)}</td><td>${esc(m.name)}</td></tr>`)}` : ''}
+          ${r.bad.length ? `<b class="bad small" style="display:block;margin-top:10px">كميات غلط (سالب أو مش رقم):</b>${list(r.bad, (m) => `<tr><td class="num small">صف ${m.row}</td><td>${esc(m.name)}</td><td class="num">${esc(m.v)}</td></tr>`)}` : ''}
+          ${r.dup ? `<div class="small warn" style="margin-top:8px">⚠ ${r.dup} صنف متكرر في الشيت — اتاخد آخر رقم.</div>` : ''}
+          <div class="small muted" style="margin-top:12px">✅ الكميات اتحطت في الجدول. <b>راجع الفروق</b> وبعدين دوس <b>حفظ الجرد</b> — لسه محدش اتحفظ.</div>`,
+        buttons: [{ t: 'تمام، أراجع', cls: 'pri' }],
+      });
+    } catch (er) { toast(er.message, 'bad'); }
+  };
   const render = () => {
     const q = $('#sq', el).value.trim().toLowerCase(); const ch = $('#sch', el).checked;
     const rows = prods.filter((p) => (!q || prodMatch(p, q)) && (!ch || counted[p.id] != null));
