@@ -39,19 +39,22 @@ const debounce = (fn, ms = 200) => { let t; return (...a) => { clearTimeout(t); 
 function qs(o) { if (!o) return ''; const p = new URLSearchParams(); for (const [k, v] of Object.entries(o)) if (v !== '' && v != null && v !== false) p.set(k, v); const s = p.toString(); return s ? '?' + s : ''; }
 // مكان البرنامج على الموقع (/ على الجهاز، أو /اسم-المستودع/ على GitHub Pages)
 const BASE = window.POS_BASE || '/';
+const ONLINE_URL = 'https://evreststore2020.github.io/everest-pos/';
 // وضع الأونلاين: لو config.js فيه بيانات Supabase، كل الطلبات بتروح لـ Supabase بدل السيرفر المحلي
 const SB = window.POS_CONFIG && window.POS_CONFIG.supabaseUrl && window.POS_CONFIG.supabaseKey ? window.POS_CONFIG : null;
 async function sbApi(method, url, body) {
   const u = new URL(url, location.origin);
   const payload = { p_token: LS.get('pos_token', null), p_method: method, p_path: u.pathname, p_query: Object.fromEntries(u.searchParams), p_body: body || {} };
+  const netErr = () => { const e = new Error('مفيش اتصال بالإنترنت'); e.offline = true; return e; };
   let r; try {
     r = await fetch(SB.supabaseUrl.replace(/\/+$/, '') + '/rest/v1/rpc/pos_api', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: SB.supabaseKey, Authorization: 'Bearer ' + SB.supabaseKey }, body: JSON.stringify(payload) });
-  } catch { throw new Error('تعذر الاتصال — اتأكد إن الإنترنت شغال'); }
+  } catch { throw netErr(); }
+  if ([502, 503, 504, 520, 521, 522, 523, 524].includes(r.status)) throw netErr(); // السيرفر مش واصل له
   let d = null; try { d = await r.json(); } catch {}
   if (!r.ok || !d || typeof d.ok !== 'boolean') throw new Error((d && (d.message || d.error)) || 'تعذر الاتصال بقاعدة البيانات (Supabase)');
   if (!d.ok) {
     if (d.status === 401 && u.pathname !== '/api/login') { LS.set('pos_token', null); S.user = null; renderLogin(); }
-    throw new Error(d.error || 'خطأ');
+    const e = new Error(d.error || 'خطأ'); e.status = d.status; throw e;
   }
   if (u.pathname === '/api/login') LS.set('pos_token', d.data.token);
   if (u.pathname === '/api/logout') LS.set('pos_token', null);
@@ -62,8 +65,115 @@ async function sbApi(method, url, body) {
   }
   return data;
 }
+// النسخة القديمة اللي على الجهاز (من غير Supabase): تحذير ثابت إن بياناتها منفصلة عن الأونلاين
+function oldCopyBanner() {
+  if (SB || document.getElementById('oldCopy')) return;
+  const b = document.createElement('div'); b.id = 'oldCopy';
+  b.style.cssText = 'position:fixed;bottom:12px;left:12px;z-index:9999;max-width:min(520px,calc(100vw - 24px));background:#b91c1c;color:#fff;padding:10px 14px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.25);font-size:13px;display:flex;gap:10px;align-items:center;flex-wrap:wrap';
+  b.innerHTML = `<b>⚠ دي النسخة القديمة اللي على الجهاز</b><span style="opacity:.9">البيع هنا مش بيوصل للوحة المدير الأونلاين.</span><a href="${ONLINE_URL}" style="background:#fff;color:#b91c1c;padding:5px 12px;border-radius:8px;font-weight:800;text-decoration:none">افتح البرنامج الأونلاين ←</a>`;
+  document.body.append(b);
+}
+setTimeout(oldCopyBanner, 0);
+
+/* =====================================================================
+   البيع من غير نت (الأونلاين بس):
+   - وهو متصل بنحفظ نسخة من بيانات البيع (الأصناف/العملاء/الوردية) على الجهاز
+   - لو النت فصل: الفاتورة بتتحفظ على الجهاز برقم مؤقت وبتتطبع عادي
+   - أول ما النت يرجع بتترفع لوحدها (ومتتسجلش مرتين لأن ليها رقم مميز)
+   ===================================================================== */
+const OFF_CACHE = /^\/api\/(me|products|customers|branches|shift\/current)(\?|$)/;
+const offKey = (url) => 'off:' + url;
+const outbox = () => LS.get('pos_outbox', []);
+const outboxFailed = () => LS.get('pos_outbox_failed', []);
+S.online = true;
+function setOnline(on) { if (S.online === on) return; S.online = on; netPill(); if (on) setTimeout(syncOutbox, 300); }
+async function cachedApi(method, url, body) {
+  try {
+    const d = await sbApi(method, url, body);
+    if (method === 'GET' && OFF_CACHE.test(url)) LS.set(offKey(url), d);
+    setOnline(true); return d;
+  } catch (e) {
+    if (e.offline) {
+      setOnline(false);
+      if (method === 'GET' && OFF_CACHE.test(url)) { const c = LS.get(offKey(url), undefined); if (c !== undefined) return c; }
+      if (method !== 'GET') e.message = 'مفيش نت — العملية دي محتاجة إنترنت (البيع بس اللي بيشتغل من غير نت)';
+    }
+    throw e;
+  }
+}
+const nowLocal = () => { const d = new Date(); return `${ymd(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+// فاتورة من غير نت: تتحفظ في الطابور وترجع فاتورة مؤقتة للطباعة
+function queueOfflineSale(body, customer) {
+  const uid = (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+  const at = nowLocal(); const br = body.branch_id || curBranch();
+  const q = outbox(); const n = q.length + outboxFailed().length + 1;
+  const notes = [body.notes, `كاشير: ${S.user.name}`].filter(Boolean).join(' — ');
+  q.push({ uid, at, user: S.user.id, user_name: S.user.name, branch_id: br, body: { ...body, notes, client_uid: uid, offline: true, offline_date: at } });
+  LS.set('pos_outbox', q);
+  // نقلل الرصيد في النسخة المحفوظة عشان الكاشير يشوف الكميات صح
+  const prods = S.cache['p' + br] || [];
+  for (const it of body.items) { const p = prods.find((x) => x.id === it.product_id); if (p) p.stock = r3(+p.stock - it.qty); }
+  for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith('off:/api/products')) { const l = LS.get(k, []); if (Array.isArray(l)) { for (const it of body.items) { const p = l.find((x) => x.id === it.product_id); if (p) p.stock = r3(+p.stock - it.qty); } LS.set(k, l); } } }
+  const items = body.items.map((it) => { const p = prods.find((x) => x.id === it.product_id) || {}; return { name: p.name || '', qty: it.qty, price: it.price, total: r2(it.qty * it.price) }; });
+  const subtotal = r2(items.reduce((a, x) => a + x.total, 0)); const total = r2(subtotal - (+body.discount || 0));
+  const pays = (body.pays || []).map((p) => ({ ...p })); const sum = r2(pays.reduce((a, p) => a + (+p.amount || 0), 0));
+  const cashGiven = r2(pays.filter((p) => p.method === 'cash').reduce((a, p) => a + (+p.amount || 0), 0));
+  if (sum > total) { const c = pays.find((p) => p.method === 'cash'); if (c) c.amount = r2(c.amount - (sum - total)); }
+  netPill();
+  return { offline: true, id: null, kind: 'sale', status: 'ok', branch_id: br, doc_no: `مؤقت-${n}`, date: at, user_name: S.user.name, customer_id: body.customer_id, customer_name: customer ? customer.name : '',
+    items, subtotal, discount: +body.discount || 0, total, paid: Math.min(total, sum), pays: pays.filter((p) => p.amount > 0), cash_given: cashGiven };
+}
+let syncing = false;
+async function syncOutbox() {
+  if (!SB || syncing || !S.user) return;
+  if (!outbox().length) return netPill();
+  syncing = true; netPill(); let ok = 0;
+  try {
+    for (const it of outbox()) {
+      try {
+        await sbApi('POST', '/api/sales', it.body);
+        LS.set('pos_outbox', outbox().filter((x) => x.uid !== it.uid)); ok++; setOnline(true);
+      } catch (e) {
+        if (e.offline) { setOnline(false); break; }
+        if (e.status === 401) break; // لازم يسجّل دخول الأول — الفواتير فاضلة محفوظة
+        LS.set('pos_outbox_failed', [...outboxFailed(), { ...it, error: e.message }]);
+        LS.set('pos_outbox', outbox().filter((x) => x.uid !== it.uid));
+        toast(`فاتورة ${it.at.slice(11, 16)} اللي اتعملت من غير نت اترفضت: ${e.message}`, 'bad');
+      }
+    }
+  } finally { syncing = false; netPill(); }
+  if (ok) { toast(`✅ اترفع ${ok} فاتورة كانت متسجلة من غير نت`, 'ok'); dropCache(); }
+}
+// مؤشر صغير تحت: من غير نت / فواتير مستنية تترفع
+function netPill() {
+  if (!SB) return;
+  let el = document.getElementById('netPill');
+  const q = outbox().length, f = outboxFailed().length;
+  if (S.online && !q && !f) { if (el) el.remove(); return; }
+  if (!el) { el = document.createElement('button'); el.id = 'netPill'; el.onclick = netModal; document.body.append(el); }
+  el.style.cssText = `position:fixed;bottom:12px;right:12px;z-index:9998;border:0;border-radius:999px;padding:9px 16px;font:inherit;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.2);color:#fff;background:${!S.online ? '#b91c1c' : f ? '#b45309' : '#1d4ed8'}`;
+  el.textContent = !S.online ? `📴 من غير نت${q ? ` — ${q} فاتورة مستنية` : ' — البيع شغال'}` : syncing ? `⏫ بيرفع ${q} فاتورة…` : q ? `⏫ ${q} فاتورة مستنية ترفع` : `⚠ ${f} فاتورة اترفضت`;
+}
+function netModal() {
+  const q = outbox(), f = outboxFailed();
+  const row = (x) => `<tr><td class="num">${esc(x.at.slice(0, 16))}</td><td>${esc(x.user_name || '')}</td><td class="n">${M((x.body.pays || []).reduce((a, p) => a + (+p.amount || 0), 0))}</td>${x.error ? `<td class="bad small">${esc(x.error)}</td>` : ''}</tr>`;
+  modal({
+    title: S.online ? '⏫ فواتير مستنية ترفع' : '📴 من غير نت',
+    body: `${S.online ? '' : '<p class="muted" style="margin-top:0">البيع شغال عادي، والفواتير بتتحفظ على الجهاز وبتترفع لوحدها أول ما النت يرجع. <b>متمسحش بيانات المتصفح ومتقفلش الجهاز من الكهربا قبل ما ترفع.</b></p>'}
+      ${q.length ? `<b>مستنية ترفع (${q.length}):</b><div class="tbl-wrap"><table class="t"><tbody>${q.map(row).join('')}</tbody></table></div>` : '<div class="muted">مفيش فواتير مستنية ✓</div>'}
+      ${f.length ? `<b class="bad" style="display:block;margin-top:12px">اترفضت لما اترفعت (${f.length}) — راجعها وسجّلها تاني لو محتاج:</b><div class="tbl-wrap"><table class="t"><tbody>${f.map(row).join('')}</tbody></table></div>` : ''}`,
+    buttons: [{ t: '⏫ ارفع دلوقتي', cls: 'pri', fn: async () => { await syncOutbox(); } }, ...(f.length ? [{ t: 'مسح المرفوضة', cls: 'bad', fn: async () => { if (!(await confirmBox('مسح الفواتير المرفوضة من الجهاز؟ (اتأكد إنك سجّلتها تاني)', 'مسح', 'bad'))) return false; LS.set('pos_outbox_failed', []); netPill(); } }] : []), { t: 'إغلاق' }],
+  });
+}
+if (SB) {
+  window.addEventListener('online', () => syncOutbox());
+  window.addEventListener('offline', () => setOnline(false));
+  setInterval(() => { if (outbox().length) syncOutbox(); }, 20000);
+  setTimeout(netPill, 0);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register(BASE + 'sw.js').catch(() => {}); // عشان الصفحة نفسها تفتح من غير نت
+}
 async function api(method, url, body) {
-  if (SB) return sbApi(method, url, body);
+  if (SB) return cachedApi(method, url, body);
   const opt = { method, headers: {}, credentials: 'same-origin' };
   if (body !== undefined) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
   let r; try { r = await fetch(url, opt); } catch { throw new Error('تعذر الاتصال بالسيرفر — تأكد إن البرنامج شغال'); }
@@ -411,7 +521,8 @@ async function sendSaleWhatsApp(s) {
 function saleDone(s) {
   const cashPay = (s.pays.find((p) => p.method === 'cash') || {}).amount || 0;
   const change = r2((s.cash_given || 0) - cashPay); const due = r2(s.total - s.paid);
-  modal({ title: 'تم حفظ الفاتورة ✓', body: `<div style="text-align:center"><div class="badge ok" style="font-size:13px">فاتورة ${esc(s.doc_no)}</div>
+  modal({ title: s.offline ? 'اتحفظت على الجهاز (من غير نت) ✓' : 'تم حفظ الفاتورة ✓', body: `<div style="text-align:center"><div class="badge ${s.offline ? 'warn' : 'ok'}" style="font-size:13px">فاتورة ${esc(s.doc_no)}</div>
+      ${s.offline ? '<div class="small warn" style="margin-top:8px">📴 مفيش نت — الفاتورة محفوظة على الجهاز وهتترفع لوحدها أول ما النت يرجع وتاخد رقمها النهائي.</div>' : ''}
       <div class="muted" style="margin-top:12px">الصافي</div><div class="num" style="font-size:30px;font-weight:800">${money(s.total)}</div>
       ${change > 0 ? `<div class="card" style="margin-top:12px;padding:14px;background:var(--ok-soft);border-color:#a7f3d0"><div class="ok" style="font-weight:800">الباقي للعميل</div><div class="num ok" style="font-size:36px;font-weight:800">${money(change)}</div></div>` : ''}
       ${due > 0.009 ? `<div class="card" style="margin-top:12px;padding:12px;background:var(--warn-soft);border-color:#fde68a"><b class="warn">آجل على العميل: <span class="num">${money(due)}</span></b></div>` : ''}
@@ -505,7 +616,8 @@ function renderLogin(msg) {
 function changePassword(forced) {
   modal({
     title: forced ? 'غيّر كلمة المرور قبل البدء' : 'تغيير كلمة المرور',
-    body: `${forced ? '<p class="warn" style="margin-top:0">لأمان حسابك لازم تغيّر كلمة المرور الافتراضية.</p>' : ''}
+    body: `${forced ? `<p class="warn" style="margin-top:0">${isAdmin() ? '🔒 كلمة مرور المدير ضعيفة — لأن البرنامج على الإنترنت لازم تغيّرها قبل ما تكمّل.' : 'لأمان حسابك لازم تغيّر كلمة المرور الافتراضية.'}</p>` : ''}
+      <div class="small muted" style="margin-bottom:10px">${isAdmin() ? 'كلمة المرور الجديدة: <b>8 حروف على الأقل وفيها حروف وأرقام</b> — مثال: <span class="num" dir="ltr">Everest2026</span>. لما تغيّرها، أي جهاز تاني داخل بالحساب ده هيخرج.' : 'كلمة المرور الجديدة: 6 حروف/أرقام على الأقل.'}</div>
       <div class="field"><label class="f">كلمة المرور الحالية</label><input class="in" type="password" name="old_password" dir="ltr"></div>
       <div class="field"><label class="f">كلمة المرور الجديدة</label><input class="in" type="password" name="new_password" dir="ltr"></div>
       <div class="field"><label class="f">تأكيد كلمة المرور الجديدة</label><input class="in" type="password" name="confirm" dir="ltr"></div>`,
@@ -638,6 +750,7 @@ async function boot() {
     if (!isAdmin()) goMode('cashier', true); else if (!S.mode) goMode('admin', true);
     applyTheme();
     renderShell(); route(); startNotifier(); startPermWatch();
+    if (SB) setTimeout(syncOutbox, 1500); // فواتير اتعملت من غير نت قبل كده؟
     if (S.user.must_change) changePassword(true);
   } catch (e) { if (!S.user) { applyTheme(); renderLogin(); } }
 }
@@ -672,6 +785,29 @@ const themeIcon = () => (LS.get('pos_theme', 'light') === 'dark' ? '☀️' : '�
    ===================================================================== */
 // كارت رقم: ic = أيقونة، tone = لونها
 const stat = (k, v, s = '', cls = '', ic = '', tone = '') => `<div class="card stat" ${tone ? `style="--tone:${tone}"` : ''}>${ic ? `<div class="si">${icon(ic)}</div>` : ''}<div style="min-width:0"><div class="k">${k}</div><div class="v ${cls}">${v}</div><div class="s">${s}</div></div></div>`;
+/* ---------- تنبيه النسخ الاحتياطي (أونلاين): لو المدير منزّلش نسخة على جهازه بقاله أسبوع ---------- */
+const daysSince = (s) => (s ? Math.floor((Date.now() - new Date(String(s).replace(' ', 'T')).getTime()) / 864e5) : Infinity);
+function backupNag(el) {
+  if (!SB || !isAdmin()) return;
+  const d = daysSince(S.settings.last_backup);
+  if (d < 7) return;
+  const box = document.createElement('div'); box.className = 'card';
+  box.style.cssText = 'margin-bottom:14px;padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;border-color:#fde68a;background:var(--warn-soft)';
+  box.innerHTML = `<span style="font-size:22px">💾</span><div class="sp"><b class="warn">${d === Infinity ? 'عمرك ما نزّلت نسخة احتياطية على جهازك' : `آخر نسخة احتياطية نزّلتها من ${d} يوم`}</b>
+    <div class="small muted">السيستم بياخد نسخة تلقائية كل يوم على Supabase${S.settings.last_snapshot ? ` (آخرها ${esc(S.settings.last_snapshot.slice(0, 16))})` : ''} — بس الأمان إن يبقى معاك نسخة على جهازك أو فلاشة كل أسبوع.</div></div>
+    <button class="btn pri" data-bk>${icon('download')}نزّل نسخة دلوقتي</button>`;
+  el.prepend(box);
+  $('[data-bk]', box).onclick = async () => { try { await downloadBackup(); box.remove(); } catch (e) { toast(e.message, 'bad'); } };
+}
+function saveJSON(obj, name) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(obj)], { type: 'application/json' }));
+  a.download = name; document.body.append(a); a.click(); a.remove();
+}
+async function downloadBackup(snapId) {
+  const d = snapId ? await GET('/api/snapshots/' + snapId) : await GET('/api/backup');
+  saveJSON(d, `pos-backup-${(d.date || ymd(new Date())).slice(0, 10)}${snapId ? '-' + snapId : ''}.json`);
+  S.settings.last_backup = new Date().toISOString(); toast('تم تنزيل النسخة', 'ok');
+}
 VIEWS.dashboard = async (el) => {
   const d = await GET('/api/dashboard', bq());
   if (!d.can_full) {
@@ -711,6 +847,7 @@ VIEWS.dashboard = async (el) => {
       <div class="card"><div class="hd">نواقص (وصلت لحد الطلب) <span class="badge bad">${d.low_stock_count}</span><span class="sp"></span><a class="btn sm" href="#/products">الأصناف</a></div><div id="ls"></div></div>
     </div>
     <div style="margin-top:18px">${dashBanner()}</div>`;
+  backupNag(el);
   const max = Math.max(1, ...d.chart.map((x) => x.v));
   $('#ch', el).innerHTML = `<div class="bars">${d.chart.map((x) => `<div class="b" title="${x.d}: ${money(x.v)}"><span class="num" style="font-size:10px">${x.v ? Math.round(x.v).toLocaleString('en-US') : ''}</span><i style="height:${Math.max(1, (x.v / max) * 120)}px"></i><span>${x.d.slice(8)}/${x.d.slice(5, 7)}</span></div>`).join('')}</div>`;
   if (S.branch) mountTable($('#bb', el), [{ t: 'الصنف', k: 'name' }, { t: 'الكمية', n: 1, f: (r) => Q(r.qty) }, { t: 'القيمة', n: 1, f: (r) => M(r.v) }], d.top, { empty: 'لا توجد مبيعات بعد' });
@@ -1017,8 +1154,11 @@ VIEWS.pos = async (el) => {
     const total = r2(subtotal() - discAmt());
     payModal(total, st, async (pays, print) => {
       const body = { branch_id: curBranch(), customer_id: st.customer ? st.customer.id : null, items: st.cart.map((x) => ({ product_id: x.product_id, qty: x.qty, price: x.price })), discount: discAmt(), pays, notes: st.notes };
-      const s = await POST('/api/sales', body);
-      await posAtt.upload('sale', s.id);
+      let s;
+      try { s = await POST('/api/sales', body); }
+      catch (e) { if (!e.offline) throw e; s = queueOfflineSale(body, st.customer); } // مفيش نت: تتحفظ على الجهاز وتترفع بعدين
+      if (s.offline) { if (posAtt.count()) toast('الصور المرفقة مش هتترفع من غير نت — ارفعها من الفاتورة بعد ما النت يرجع', 'warn'); }
+      else await posAtt.upload('sale', s.id);
       st.cart = []; st.customer = null; st.disc = 0; st.notes = '';
       S.cache['c' + curBranch()] = null;
       if (print) printSale(s);
@@ -2206,16 +2346,24 @@ VIEWS.settings = async (el) => {
       <div class="field"><label class="f">وحدات الأصناف (كل وحدة في سطر)</label><textarea class="in" rows="7" id="un">${esc((S.settings.units || []).join('\n'))}</textarea></div></div>
       <button class="btn pri" id="gsave">حفظ الإعدادات</button></div></div>
       <div class="card"><div class="hd">النسخ الاحتياطي</div><div class="bd">${SB ? `<p class="muted" style="margin-top:0">البرنامج شغال <b>أونلاين</b> والبيانات محفوظة على Supabase. نزّل نسخة (ملف JSON) كل أسبوع واحتفظ بيها على فلاشة أو Google Drive.</p>
-      <button class="btn pri" id="bkbtn">${icon('download')}تنزيل نسخة احتياطية الآن</button></div></div></div>` : `<p class="muted" style="margin-top:0">البرنامج بياخد نسخة احتياطية تلقائية كل يوم في فولدر <b>backups</b> جنب البرنامج (آخر 30 يوم).<br>ويُفضّل تنزّل نسخة على فلاشة أو Google Drive كل أسبوع.</p>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn pri" id="bkbtn">${icon('download')}تنزيل نسخة احتياطية الآن</button><button class="btn" id="snapNow">📸 خد نسخة على Supabase دلوقتي</button></div>
+      <div class="small muted" style="margin:14px 0 6px"><b>النسخ التلقائية:</b> السيستم بياخد نسخة كاملة كل يوم الساعة 1 بالليل ويحتفظ بآخر 7 أيام (+ نسخة قبل أي مسح). تقدر تنزّل أي واحدة:</div>
+      <div id="snaps" class="small faint">جاري التحميل…</div></div></div></div>` : `<p class="muted" style="margin-top:0">البرنامج بياخد نسخة احتياطية تلقائية كل يوم في فولدر <b>backups</b> جنب البرنامج (آخر 30 يوم).<br>ويُفضّل تنزّل نسخة على فلاشة أو Google Drive كل أسبوع.</p>
       <a class="btn pri" href="/api/backup" download id="bkbtn">${icon('download')}تنزيل نسخة احتياطية الآن</a>
       <p class="small faint">للاسترجاع: اقفل البرنامج، وحط ملف النسخة مكان <span class="num">data/pos.db</span> بنفس الاسم، وشغّل البرنامج تاني.</p></div></div></div>`}`;
-  if (SB) $('#bkbtn', el).onclick = async () => {
-    try {
-      const d = await GET('/api/backup');
-      const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(d)], { type: 'application/json' }));
-      a.download = `pos-backup-${ymd(new Date())}.json`; document.body.append(a); a.click(); a.remove(); toast('تم تنزيل النسخة', 'ok');
-    } catch (e) { toast(e.message, 'bad'); }
-  };
+  if (SB) {
+    const KIND = { auto: ['تلقائية', ''], manual: ['يدوي', 'pri'], 'before-reset': ['قبل المسح', 'warn'] };
+    const loadSnaps = async () => {
+      try {
+        const list = await GET('/api/snapshots');
+        $('#snaps', el).innerHTML = list.length ? `<div class="tbl-wrap"><table class="t"><tbody>${list.map((s) => `<tr><td class="num">${esc(s.date.slice(0, 16))}</td><td><span class="badge ${(KIND[s.kind] || ['', ''])[1]}">${(KIND[s.kind] || [s.kind])[0]}</span></td><td class="num small">${(s.size / 1048576).toFixed(2)} MB</td><td class="n"><button class="btn sm" data-snap="${s.id}">${icon('download')}تنزيل</button></td></tr>`).join('')}</tbody></table></div>` : 'لسه مفيش نسخ — أول نسخة تلقائية الليلة.';
+        $$('[data-snap]', el).forEach((b) => (b.onclick = async () => { b.disabled = true; try { await downloadBackup(+b.dataset.snap); } catch (e) { toast(e.message, 'bad'); } b.disabled = false; }));
+      } catch (e) { $('#snaps', el).textContent = e.message; }
+    };
+    $('#bkbtn', el).onclick = async () => { try { await downloadBackup(); } catch (e) { toast(e.message, 'bad'); } };
+    $('#snapNow', el).onclick = async () => { try { await POST('/api/snapshots'); toast('تم أخذ نسخة', 'ok'); loadSnaps(); } catch (e) { toast(e.message, 'bad'); } };
+    loadSnaps();
+  }
   $$('[data-save]', el).forEach((b) => (b.onclick = async () => {
     const box = $(`[data-b="${b.dataset.save}"]`, el);
     try { await PUT('/api/branches/' + b.dataset.save, fv(box)); toast('تم الحفظ', 'ok'); const me = await GET('/api/me'); S.branches = me.branches; renderShell(); route(); } catch (e) { toast(e.message, 'bad'); }
