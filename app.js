@@ -437,10 +437,23 @@ S.mode = pathMode();
 const isCashierMode = () => !isAdmin() || S.mode === 'cashier';
 function goMode(m, replace) { S.mode = m; const p = BASE + (m ? m + '/' : ''); if (location.pathname !== p) history[replace ? 'replaceState' : 'pushState']({}, '', p + location.hash); }
 window.addEventListener('popstate', () => { S.mode = pathMode(); if (S.user) { renderShell(); route(); } else renderLogin(); });
+/* ---------- توقيع الشركة المنفّذة: داش ---------- */
+const DASH_MARK = (h = 28, one = '#6c5ce7', two = '#ff5c4d') => `<svg viewBox="0 0 64 48" height="${h}" aria-hidden="true" style="display:block;flex:none"><path d="M18 0h14L14 48H0z" fill="${one}"/><path d="M42 0h14L38 48H24z" fill="${two}"/></svg>`;
+const DASH_WORD = (dark) => `<span dir="ltr" style="font:800 1.25em/1 ui-monospace,Consolas,'Courier New',monospace;letter-spacing:-.5px"><span style="color:#6c5ce7">D</span><span style="color:${dark ? '#fff' : '#14141f'}">a</span><span style="color:#6c5ce7">S</span><span style="color:${dark ? '#fff' : '#14141f'}">h</span></span>`;
+// شريط "تصميم وتنفيذ شركة داش" (dark = على خلفية غامقة)
+function dashCredit(dark, big) {
+  const sub = dark ? '#a9b4cc' : '#64748b';
+  return `<div class="dash-credit" style="display:flex;align-items:center;justify-content:center;gap:${big ? 14 : 10}px;flex-wrap:wrap">
+    ${DASH_MARK(big ? 52 : 22)}
+    <div style="line-height:1.4;text-align:right"><div style="font-size:${big ? 14 : 11.5}px;color:${sub}">تم تصميم وتنفيذ هذا النظام بواسطة</div>
+      <div style="display:flex;align-items:baseline;gap:10px;font-size:${big ? 26 : 14}px">${DASH_WORD(dark)}<b style="color:${dark ? '#fff' : '#14141f'}">شركة داش</b></div>
+      ${big ? `<div style="font-size:14px;color:#ff7a6e">من الفكرة للإطلاق.. بسرعة</div>` : ''}</div></div>`;
+}
 function renderChoice() {
   document.title = 'اختار الشاشة';
   const company = S.settings.company_name || 'برنامج الكاشير والمحاسبة';
   $('#app').innerHTML = `<div class="portal"><div class="portal-in">
+    <div style="display:flex;justify-content:center;margin-bottom:26px"><div style="padding:12px 20px;border-radius:16px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12)">${dashCredit(true, true)}</div></div>
     <div style="text-align:center;margin-bottom:26px"><span class="logo" style="margin:0 auto 14px;width:56px;height:56px">${icon('roller')}</span><h1>أهلاً بيك</h1><p>اختار الشاشة اللي عايز تدخل عليها</p></div>
     <div class="portal-cards">
       <a class="pcard2 owner" href="${BASE}admin/" data-m="admin"><div class="pi">👑</div><b>المدير العام</b><span>لوحة التحكم، الحركة المباشرة، الأرباح والتقارير، المشتريات والخزينة، المستخدمين والإعدادات</span><em>دخول المدير ←</em></a>
@@ -456,7 +469,7 @@ function renderLogin(msg) {
     <div class="login-art"><div class="swatches"><span style="background:#c8102e"></span><span style="background:#0b6e4f"></span><span style="background:#f59e0b"></span><span style="background:#3b82f6"></span><span style="background:#f5f5f4"></span></div>
       <div><h2>كاشير ومحاسبة<br>معارض الدهانات</h2><p>البيع والمخزون والحسابات للمعرضين في مكان واحد — وكل عملية بتوصل للمدير لحظتها.</p>
       <ul><li><i>🧾</i> فواتير وإيصالات ومرتجعات</li><li><i>💳</i> كاش، فيزا، إنستاباي، فودافون كاش</li><li><i>📊</i> أرباح وتقارير ومخزون لحظة بلحظة</li></ul></div>
-      <div class="small" style="color:#7c8aa5">© ${new Date().getFullYear()}</div></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">${dashCredit(true)}<span class="small" style="color:#7c8aa5">© ${new Date().getFullYear()}</span></div></div>
     <div class="login-side"><form class="login" id="lf"><div class="row" style="margin-bottom:18px"><span class="logo">${adm ? '👑' : '🧾'}</span><span class="sp"></span><a href="${BASE}" id="chg" class="btn sm ghost">⇄ تغيير الشاشة</a></div>
     <span class="badge ${adm ? 'pri' : 'ok'}" style="margin-bottom:8px">${adm ? 'شاشة المدير العام' : 'شاشة الكاشير'}</span>
     <h1>${adm ? 'دخول المدير العام' : 'دخول الكاشير'}</h1><p class="muted" style="margin:0 0 22px">${adm ? 'التقارير والحسابات وكل المعارض' : 'سجّل دخولك وابدأ البيع'}</p>
@@ -465,7 +478,8 @@ function renderLogin(msg) {
     : `<div class="field"><label class="f">اسم المستخدم</label><input class="in" name="username" autocomplete="username" required dir="ltr" style="padding:12px 14px"></div>`}
     <div class="field"><label class="f">كلمة المرور</label><input class="in" type="password" name="password" autocomplete="current-password" required dir="ltr" style="padding:12px 14px"></div>
     <div id="lerr" class="bad small" style="min-height:20px">${esc(msg || '')}</div>
-    <button class="btn pri lg" style="width:100%">دخول</button></form></div></div>`;
+    <button class="btn pri lg" style="width:100%">دخول</button>
+    <div class="dash-mini" style="margin-top:22px;padding-top:16px;border-top:1px solid var(--line, #e5e7eb)">${dashCredit(false)}</div></form></div></div>`;
   (adm ? $('[name=password]') : $('[name=username]')).focus();
   $('#lf').onsubmit = async (e) => {
     e.preventDefault(); const b = $('#lf button'); b.disabled = true;
