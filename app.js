@@ -229,6 +229,7 @@ const IC = {
   quote: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
   cheque: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 14h6M15 14h3M6 10h12"/>',
   bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
+  letter: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
 };
 const icon = (n) => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${IC[n] || ''}</svg>`;
 
@@ -657,6 +658,8 @@ const NAV = [
   { id: 'loans', t: 'السلف والاقتراض', ct: 'سلف واقتراض', i: 'coins', perm: 'loans', c: 1 },
   { id: 'treasury', t: 'الخزينة والبنك', i: 'safe', perm: 'treasury' },
   { id: 'cheques', t: 'الشيكات', i: 'cheque', perm: 'treasury' },
+  { grp: 'المطبوعات' },
+  { id: 'docs', t: 'المطبوعات', ct: 'المطبوعات', i: 'print', perm: 'documents' },
   { grp: 'الإدارة', admin: true },
   { id: 'users', t: 'المستخدمين والصلاحيات', i: 'shield', admin: true },
   { id: 'settings', t: 'الإعدادات والنسخ الاحتياطي', i: 'gear', admin: true },
@@ -2296,6 +2299,7 @@ async function quoteModal(id, onChange) {
     buttons: [
       ...(open ? [{ t: `${icon('cart')} تحويل لفاتورة / تعديل`, cls: 'ok pri', fn: async () => { await quoteToPos(q); } }] : []),
       { t: `${icon('print')} طباعة`, fn: () => { printQuote(q); return false; } },
+      ...(can('documents') ? [{ t: '📄 عرض رسمي على ورق الشركة', fn: () => { docForm('quote', { _br: q.branch_id, to: q.cust_name || '', items: q.items.map((i) => ({ desc: i.name, unit: i.unit || '', qty: i.qty, price: i.price })), discount: q.discount || 0, valid: q.valid_until, subject: q.notes || '' }); } }] : []),
       ...(q.cust_phone ? [{ t: '💬 واتساب', fn: () => { openWhatsApp(q.cust_phone, quoteText(q)); return false; } }] : []),
       ...(open ? [{ t: 'إلغاء العرض', cls: 'bad', fn: async () => { const why = await promptBox('إلغاء عرض السعر', 'السبب (اختياري) — مثلاً: العميل اشترى من مكان تاني'); if (why === null) return false; await POST(`/api/quotes/${q.id}/cancel`, { reason: why }); toast('اتلغى العرض', 'ok'); onChange && onChange(); } }] : []),
       { t: 'إغلاق' },
@@ -2366,7 +2370,7 @@ VIEWS.cheques = async (el) => {
     { t: 'رقم الشيك', f: (r) => `<span class="num">${esc(r.cheque_no || '')}</span>`, v: (r) => r.cheque_no }, { t: 'البنك', k: 'bank' },
     { t: 'الحالة', f: (r) => `<span class="badge ${(CHQ_ST[r.status] || ['', ''])[1]}">${(CHQ_ST[r.status] || [r.status])[0]}</span>${r.done_date ? `<div class="small faint num">${esc(r.done_date.slice(0, 10))}</div>` : ''}${r.payment_status === 'void' ? '<div class="small bad">السند اتلغى</div>' : ''}`, v: (r) => (CHQ_ST[r.status] || [r.status])[0] },
     { t: 'ملاحظات', f: (r) => esc([r.notes, r.done_notes].filter(Boolean).join(' — ')), v: (r) => [r.notes, r.done_notes].filter(Boolean).join(' — ') },
-    { t: '', noCsv: 1, f: (r) => `<span class="row" style="flex-wrap:nowrap">${r.status === 'pending' ? `<button class="btn sm ok" data-act="collect">${r.direction === 'in' ? 'اتحصّل' : 'اتصرف'}</button><button class="btn sm bad" data-act="bounce">ارتد</button>${isAdmin() ? '<button class="btn sm ghost" data-act="cancel" title="إلغاء الشيك (اتسجل غلط)">✕</button>' : ''}` : r.status === 'bounced' ? '<button class="btn sm" data-act="reopen">تقديمه تاني</button>' : ''}</span>` },
+    { t: '', noCsv: 1, f: (r) => `<span class="row" style="flex-wrap:nowrap">${r.direction === 'in' && can('documents') ? '<button class="btn sm ghost" data-act="rcpt" title="اطبع إيصال استلام للعميل">🖨 إيصال</button>' : ''}${r.status === 'pending' ?`<button class="btn sm ok" data-act="collect">${r.direction === 'in' ? 'اتحصّل' : 'اتصرف'}</button><button class="btn sm bad" data-act="bounce">ارتد</button>${isAdmin() ? '<button class="btn sm ghost" data-act="cancel" title="إلغاء الشيك (اتسجل غلط)">✕</button>' : ''}` : r.status === 'bounced' ? '<button class="btn sm" data-act="reopen">تقديمه تاني</button>' : ''}</span>` },
   ];
   const load = async () => {
     $('#cr', el).style.display = st.status === 'pending' ? 'none' : '';
@@ -2381,6 +2385,7 @@ VIEWS.cheques = async (el) => {
   const act = async (a, r) => {
     const who = `${r.direction === 'in' ? 'من' : 'لـ'} ${r.party_name} بمبلغ ${money(r.amount)}`;
     try {
+      if (a === 'rcpt') return docForm('cheque_receipt', { _br: r.branch_id, from: r.party_name || '', items: [{ no: r.cheque_no || '', bank: r.bank || '', due: r.due_date, amount: r.amount }], for: r.notes || '' });
       if (a === 'collect') {
         modal({ title: r.direction === 'in' ? 'تحصيل الشيك' : 'صرف الشيك', body: `<p style="margin-top:0">الشيك ${esc(who)}${r.cheque_no ? ` — رقم <span class="num">${esc(r.cheque_no)}</span>` : ''}.</p><p class="small muted">هيتعمل ${r.direction === 'in' ? 'سند قبض من العميل ويقل رصيده' : 'سند صرف للمورد ويقل اللي علينا'} بنفس المبلغ.</p>
           <div class="field"><label class="f">${r.direction === 'in' ? 'الفلوس دخلت فين؟' : 'اتصرف من فين؟'}</label><select class="in" name="method">${Object.entries(S.allMethods || S.methods).map(([k, v]) => opt(k, v, 'bank')).join('')}</select></div><div class="field"><label class="f">ملاحظة (اختياري)</label><input class="in" name="notes"></div>`,
@@ -2563,7 +2568,7 @@ VIEWS.reports = async (el) => {
 /* =====================================================================
    المستخدمين
    ===================================================================== */
-const PERMS = [['change_price', 'تعديل سعر البيع في الكاشير'], ['credit_sale', 'البيع الآجل'], ['returns', 'عمل مرتجع مبيعات'], ['customers', 'العملاء وسندات القبض'], ['suppliers', 'الموردين وسندات الصرف'], ['purchases', 'فواتير المشتريات'], ['expenses', 'تسجيل المصروفات'], ['loans', 'السلف والاقتراض (من المعرض التاني أو جهة برّه)'], ['products', 'إضافة وتعديل الأصناف والأسعار'], ['stock', 'الجرد وتسوية المخزون'], ['treasury', 'الخزينة والبنك'], ['reports', 'التقارير ولوحة التحكم الكاملة'], ['see_cost', 'رؤية التكلفة والأرباح']];
+const PERMS = [['change_price', 'تعديل سعر البيع في الكاشير'], ['credit_sale', 'البيع الآجل'], ['returns', 'عمل مرتجع مبيعات'], ['customers', 'العملاء وسندات القبض'], ['suppliers', 'الموردين وسندات الصرف'], ['purchases', 'فواتير المشتريات'], ['expenses', 'تسجيل المصروفات'], ['loans', 'السلف والاقتراض (من المعرض التاني أو جهة برّه)'], ['products', 'إضافة وتعديل الأصناف والأسعار'], ['stock', 'الجرد وتسوية المخزون'], ['treasury', 'الخزينة والبنك'], ['reports', 'التقارير ولوحة التحكم الكاملة'], ['see_cost', 'رؤية التكلفة والأرباح'], ['documents', 'المطبوعات (إيصالات، أذون تسليم، تفويضات، عروض رسمية)']];
 const PERM_PRESETS = {
   basic: { t: 'كاشير عادي', hint: 'بيع ومرتجع وعملاء ومصروفات بسيطة — خصم لحد 5%', p: { max_discount: 5, credit_sale: true, returns: true, customers: true, expenses: true } },
   trusted: { t: 'كاشير موثوق / مشرف', hint: 'زيادة: تعديل السعر، المشتريات، الجرد، الأصناف — خصم لحد 10%', p: { max_discount: 10, change_price: true, credit_sale: true, returns: true, customers: true, suppliers: true, purchases: true, expenses: true, products: true, stock: true } },
@@ -2691,6 +2696,417 @@ VIEWS.settings = async (el) => {
     LS.set('pos_sound', $('#snd', el).checked);
     try { await PUT('/api/settings', v); const me = await GET('/api/me'); S.settings = me.settings; S.methods = me.methods; toast('تم حفظ الإعدادات', 'ok'); renderShell(); route(); } catch (e) { toast(e.message, 'bad'); }
   };
+};
+
+/* =====================================================================
+   المطبوعات: ورق الشركة (هيد ليتر ملوّن + لوجو + لوجوهات شركاء) ومستندات بأرقام مسلسلة
+   ===================================================================== */
+// المبلغ بالحروف (تفقيط): 1500.25 ← فقط ألف وخمسمائة جنيه مصري وخمسة وعشرون قرشاً لا غير
+function tafqit(n) {
+  n = Math.round((+n || 0) * 100) / 100; const lb = Math.floor(n), pt = Math.round((n - lb) * 100);
+  const ones = ['', 'واحد', 'اثنان', 'ثلاثة', 'أربعة', 'خمسة', 'ستة', 'سبعة', 'ثمانية', 'تسعة', 'عشرة', 'أحد عشر', 'اثنا عشر', 'ثلاثة عشر', 'أربعة عشر', 'خمسة عشر', 'ستة عشر', 'سبعة عشر', 'ثمانية عشر', 'تسعة عشر'];
+  const tens = ['', '', 'عشرون', 'ثلاثون', 'أربعون', 'خمسون', 'ستون', 'سبعون', 'ثمانون', 'تسعون'];
+  const hund = ['', 'مائة', 'مائتان', 'ثلاثمائة', 'أربعمائة', 'خمسمائة', 'ستمائة', 'سبعمائة', 'ثمانمائة', 'تسعمائة'];
+  const b1000 = (x) => { const h = Math.floor(x / 100), r = x % 100, p = []; if (h) p.push(hund[h]); if (r) p.push(r < 20 ? ones[r] : r % 10 ? `${ones[r % 10]} و${tens[Math.floor(r / 10)]}` : tens[r / 10]); return p.join(' و'); };
+  const words = (x) => {
+    if (!x) return 'صفر'; const p = [];
+    const sc = (v, one, two, few, many) => { if (!v) return; if (v === 1) p.push(one); else if (v === 2) p.push(two); else { const l = v % 100; p.push(`${b1000(v)} ${l >= 3 && l <= 10 ? few : many}`); } };
+    sc(Math.floor(x / 1e9), 'مليار', 'ملياران', 'مليارات', 'مليار'); sc(Math.floor(x / 1e6) % 1000, 'مليون', 'مليونان', 'ملايين', 'مليون'); sc(Math.floor(x / 1000) % 1000, 'ألف', 'ألفان', 'آلاف', 'ألف');
+    if (x % 1000) p.push(b1000(x % 1000)); return p.join(' و');
+  };
+  return `فقط ${words(lb)} جنيه مصري${pt ? ` و${words(pt)} قرشاً` : ''} لا غير`;
+}
+async function loadLH(force) { if (force || !S.lh) S.lh = await GET('/api/letterhead').catch(() => ({})); return S.lh || {}; }
+const docDate = (s) => { if (!s) return ''; const [y, m, d] = String(s).slice(0, 10).split('-'); return `${+d} ${AR_MONTHS[+m - 1] || ''} ${y}`; };
+const nl2br = (s) => esc(s || '').replace(/\n/g, '<br>');
+const lines = (s) => String(s || '').split('\n').map((x) => x.trim()).filter(Boolean);
+
+/* ---------- شكل الورقة ---------- */
+const docCSS = (lh) => {
+  const c1 = lh.color1 || '#1e3a8a', c2 = lh.color2 || '#c8102e';
+  return `@page{size:A4;margin:0}*{box-sizing:border-box}html,body{margin:0;background:#fff}
+  body{font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:12.5px;line-height:1.75;color:#1f2937;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .pg{position:relative;padding:0 15mm 36mm;min-height:297mm}
+  .lh{display:flex;align-items:center;gap:14px;margin:0 -15mm;padding:8mm 15mm 7mm}
+  .lh-band{background:linear-gradient(120deg,${c1},color-mix(in srgb,${c1} 62%,#000));color:#fff}
+  .lh-classic{border-bottom:3px double ${c1}}
+  .lh-minimal{flex-direction:column;text-align:center;gap:6px;padding-bottom:5mm;border-bottom:1px solid #e5e7eb}
+  .lh-main{display:flex;align-items:center;gap:14px;flex:1;min-width:0}.lh-minimal .lh-main{flex-direction:column;gap:6px}
+  .lh-logo{height:22mm;max-width:46mm;object-fit:contain}.lh-band .lh-logo{background:#fff;border-radius:10px;padding:4px}
+  .lh-name b{display:block;font-size:22px;line-height:1.25;color:${c1}}.lh-band .lh-name b{color:#fff}
+  .lh-name .en{display:block;direction:ltr;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;opacity:.85}
+  .lh-name small{display:block;font-size:12px;opacity:.85;color:inherit}.lh-classic .lh-name small,.lh-minimal .lh-name small{color:#6b7280}
+  .lh-parts{display:flex;gap:8px;align-items:center}.lh-parts figure{margin:0;text-align:center}
+  .lh-parts img{height:14mm;max-width:30mm;object-fit:contain;display:block;margin:auto}.lh-band .lh-parts img{background:#fff;border-radius:8px;padding:3px}
+  .lh-parts figcaption{font-size:9px;opacity:.85;margin-top:2px}
+  .lh-stripe{height:5px;margin:0 -15mm;background:linear-gradient(90deg,${c2},${c2} 35%,${c1} 35%)}.lh-minimal+.lh-stripe{display:none}
+  .lf{position:fixed;bottom:0;left:0;right:0;font-size:10.5px;color:#4b5563;text-align:center}
+  .lf-reg{padding:0 15mm 3px}.lf-note{padding:0 15mm 4px;font-size:10px;color:#6b7280}
+  .lf-bar{background:${c1};color:#fff;padding:7px 15mm;display:flex;gap:6px 16px;justify-content:center;flex-wrap:wrap;border-top:4px solid ${c2}}
+  .wm{position:fixed;top:50%;left:50%;width:120mm;transform:translate(-50%,-50%);opacity:.05;z-index:0;pointer-events:none}
+  .body{position:relative;z-index:1}
+  .dt{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin:8mm 0 5mm}
+  .dt h1{margin:0;font-size:24px;color:${c1};line-height:1.2}.dt .dno{display:inline-block;margin-top:4px;background:${c2};color:#fff;border-radius:6px;padding:1px 10px;font-weight:700;direction:ltr;font-size:12px}
+  .dmeta{border-collapse:collapse;font-size:12px;min-width:62mm}.dmeta td{padding:3px 8px;border:1px solid #e5e7eb}.dmeta td:first-child{background:#f3f4f6;font-weight:700;color:#374151;white-space:nowrap}
+  .to{margin:2mm 0 3mm;font-size:14px}.to b{color:${c1}}.subj{margin:2mm 0;padding:5px 10px;background:color-mix(in srgb,${c1} 7%,#fff);border-right:4px solid ${c1};font-weight:700}
+  p{margin:2mm 0}.lead{font-size:13.5px}
+  table.it{width:100%;border-collapse:collapse;margin:3mm 0;font-size:12px}
+  table.it th{background:${c1};color:#fff;padding:6px 8px;font-weight:700;text-align:right}table.it td{padding:6px 8px;border-bottom:1px solid #e5e7eb;vertical-align:top}
+  table.it tbody tr:nth-child(even) td{background:#f9fafb}table.it .n{text-align:left;direction:ltr;white-space:nowrap}table.it .c{text-align:center;width:28px;color:#6b7280}
+  .tots{display:flex;justify-content:space-between;gap:12mm;align-items:flex-start;margin-top:2mm}
+  .words{flex:1;padding:8px 12px;border:1px dashed ${c1};border-radius:8px;background:color-mix(in srgb,${c1} 5%,#fff);font-weight:700;color:${c1}}
+  table.tt{border-collapse:collapse;min-width:70mm}table.tt td{padding:4px 10px;border-bottom:1px solid #e5e7eb}table.tt td.n{text-align:left;direction:ltr;font-weight:700}
+  table.tt tr.g td{background:${c1};color:#fff;font-size:14px;font-weight:800;border:0}
+  .box{border:1.5px solid ${c1};border-radius:10px;padding:5mm 6mm;margin:4mm 0}.row2{display:flex;gap:10px;margin:2.5mm 0;align-items:baseline}
+  .row2 .k{font-weight:700;color:${c1};white-space:nowrap}.row2 .v{flex:1;border-bottom:1px dotted #9ca3af;padding:0 4px;font-weight:700;min-height:20px}
+  .amt{display:inline-block;border:2px solid ${c1};border-radius:8px;padding:3px 14px;font-size:18px;font-weight:800;direction:ltr;color:${c1}}
+  .terms{margin-top:4mm}.terms h3{margin:0 0 2mm;font-size:13px;color:${c1}}.terms ol{margin:0;padding-right:18px}.terms li{margin:1px 0}
+  .signs{display:flex;gap:8mm;margin-top:10mm;page-break-inside:avoid}.sg{flex:1;text-align:center}.sg b{display:block;color:${c1};margin-bottom:2px}
+  .sg span{display:block;font-size:12px}.sg i{display:block;border-bottom:1px solid #374151;height:15mm;margin:0 6mm}.sg small{display:block;color:#6b7280;margin-top:3px}
+  .stampbox{width:30mm;height:30mm;border:1.5px dashed #9ca3af;border-radius:50%;margin:2mm auto 0;display:grid;place-items:center;color:#9ca3af;font-size:10px}
+  .closing{margin-top:5mm;font-weight:700}.void{position:fixed;top:40%;left:50%;transform:translate(-50%,-50%) rotate(-24deg);font-size:90px;font-weight:900;color:rgba(220,38,38,.18);z-index:2;border:8px solid rgba(220,38,38,.18);padding:0 30px;border-radius:20px}
+  .muted{color:#6b7280}.ltr{direction:ltr;display:inline-block}`;
+};
+function lhHeader(lh, br) {
+  const name = lh.name || S.settings.company_name || br.name || '';
+  const parts = (lh.partners || []).filter((p) => p.img);
+  return `<header class="lh lh-${esc(lh.style || 'band')}"><div class="lh-main">${lh.logo ? `<img class="lh-logo" src="${esc(lh.logo)}" alt="">` : ''}<div class="lh-name"><b>${esc(name)}</b>${lh.name_en ? `<span class="en">${esc(lh.name_en)}</span>` : ''}${lh.subtitle ? `<small>${esc(lh.subtitle)}</small>` : ''}</div></div>
+    ${parts.length ? `<div class="lh-parts">${parts.map((p) => `<figure><img src="${esc(p.img)}" alt="">${p.name ? `<figcaption>${esc(p.name)}</figcaption>` : ''}</figure>`).join('')}</div>` : ''}</header><div class="lh-stripe"></div>`;
+}
+function lhFooter(lh, br) {
+  const addr = (lh.use_branch && br.address) || lh.address || br.address || '', ph = (lh.use_branch && br.phone) || lh.phones || br.phone || '';
+  const bits = [addr && `📍 ${esc(addr)}`, ph && `☎ <span class="ltr">${esc(ph)}</span>`, lh.email && `✉ <span class="ltr">${esc(lh.email)}</span>`, lh.website && `<span class="ltr">${esc(lh.website)}</span>`].filter(Boolean);
+  const reg = [lh.tax_no && `الرقم الضريبي: <span class="ltr">${esc(lh.tax_no)}</span>`, lh.cr_no && `سجل تجاري: <span class="ltr">${esc(lh.cr_no)}</span>`].filter(Boolean);
+  return `<footer class="lf">${reg.length ? `<div class="lf-reg">${reg.join(' &nbsp;·&nbsp; ')}</div>` : ''}${lh.footer ? `<div class="lf-note">${esc(lh.footer)}</div>` : ''}<div class="lf-bar">${bits.map((b) => `<span>${b}</span>`).join('') || '&nbsp;'}</div></footer>`;
+}
+const signsHTML = (list, stamp) => `<div class="signs">${list.map((s) => `<div class="sg"><b>${esc(s.t)}</b><span>${esc(s.name || '') || '&nbsp;'}</span><i></i><small>${esc(s.sub || 'الاسم / التوقيع')}</small></div>`).join('')}${stamp ? '<div class="sg"><b>ختم الشركة</b><div class="stampbox">الختم</div></div>' : ''}</div>`;
+const termsHTML = (t, title = 'الشروط والأحكام') => { const l = lines(t); return l.length ? `<div class="terms"><h3>${title}</h3><ol>${l.map((x) => `<li>${esc(x.replace(/^[\d٠-٩]+[.)\-]\s*/, ''))}</li>`).join('')}</ol></div>` : ''; };
+const metaHTML = (rows) => `<table class="dmeta">${rows.filter((r) => r && r[1] !== '' && r[1] != null).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</table>`;
+const titleHTML = (t, no, meta) => `<div class="dt"><div><h1>${esc(t)}</h1>${no ? `<span class="dno">${esc(no)}</span>` : '<span class="dno">مسودة</span>'}</div>${metaHTML(meta)}</div>`;
+const rowK = (k, v) => `<div class="row2"><span class="k">${k}</span><span class="v">${v || '&nbsp;'}</span></div>`;
+// حساب البنود اللي فيها أسعار
+const docCalc = (d) => {
+  const items = (d.items || []).filter((x) => String(x.desc || '').trim());
+  const sub = r2(items.reduce((s, x) => s + (+x.qty || 0) * (+x.price || 0), 0));
+  const disc = Math.min(sub, r2(+d.discount || 0)); const vat = d.vat ? r2(((sub - disc) * (+d.vat_rate || 14)) / 100) : 0;
+  return { items, sub, disc, vat, total: r2(sub - disc + vat) };
+};
+function moneyTable(d, cols) {
+  const c = docCalc(d);
+  const head = `<tr><th class="c">#</th>${cols.map((x) => `<th class="${x.n ? 'n' : ''}">${x.t}</th>`).join('')}</tr>`;
+  const body = c.items.map((x, i) => `<tr><td class="c">${i + 1}</td>${cols.map((col) => `<td class="${col.n ? 'n' : ''}">${col.f ? col.f(x) : esc(x[col.k] ?? '')}</td>`).join('')}</tr>`).join('');
+  return { html: `<table class="it"><thead>${head}</thead><tbody>${body || `<tr><td colspan="${cols.length + 1}" class="muted" style="text-align:center">—</td></tr>`}</tbody></table>`, c };
+}
+const totalsHTML = (c, d) => `<div class="tots"><div class="words">${esc(tafqit(c.total))}</div><table class="tt"><tr><td>الإجمالي</td><td class="n">${money(c.sub)}</td></tr>${c.disc ? `<tr><td>الخصم</td><td class="n">${money(c.disc)}</td></tr>` : ''}${c.vat ? `<tr><td>ضريبة القيمة المضافة ${+d.vat_rate || 14}%</td><td class="n">${money(c.vat)}</td></tr>` : ''}<tr class="g"><td>الصافي</td><td class="n">${money(c.total)} ج.م</td></tr></table></div>`;
+const PRICE_COLS = [{ k: 'desc', t: 'البيان' }, { k: 'unit', t: 'الوحدة' }, { t: 'الكمية', n: 1, f: (x) => qf(x.qty) }, { t: 'سعر الوحدة', n: 1, f: (x) => money(x.price) }, { t: 'الإجمالي', n: 1, f: (x) => money((+x.qty || 0) * (+x.price || 0)) }];
+
+/* ---------- أنواع المستندات: الخانات + شكل الطباعة ---------- */
+const PURPOSES = ['استلام بضاعة', 'تسليم بضاعة', 'تحصيل مبالغ نقدية', 'استلام شيكات', 'إنهاء الإجراءات والتوقيع', 'غرض آخر (موضح بالتفاصيل)'];
+const DOCS = {
+  quote: { t: 'عرض سعر رسمي', ic: 'quote', tone: '#2563eb', d: 'لشركة أو مقاول بالاسم — بنود وأسعار وشروط ومدة سريان والمبلغ بالحروف',
+    fields: [{ k: 'to', t: 'السادة / شركة', req: 1, list: 'customers', ph: 'مثال: شركة جبال للمقاولات' }, { k: 'attn', t: 'عناية السيد / م.', ph: 'مثال: م. أحمد سامي — مدير المشروع' },
+      { k: 'subject', t: 'الموضوع', full: 1, ph: 'مثال: عرض أسعار دهانات مشروع فيلات التجمع' }, { k: 'intro', t: 'المقدمة', type: 'textarea', full: 1, rows: 2, def: 'بالإشارة إلى طلبكم، يسعدنا أن نتقدم لسيادتكم بعرض أسعارنا للأصناف التالية:' },
+      { k: 'valid', t: 'العرض ساري حتى', type: 'date', def: () => { const x = new Date(); x.setDate(x.getDate() + 15); return ymd(x); } }, { k: 'payment', t: 'طريقة الدفع', ph: 'مثال: 50% مقدم والباقي عند التسليم' },
+      { k: 'delivery', t: 'التسليم', ph: 'مثال: خلال 3 أيام من التعميد — بموقع العميل' }, { k: 'closing', t: 'الختام', def: 'وتفضلوا بقبول فائق الاحترام والتقدير،،،' }],
+    items: { money: 1, products: 1 }, vat: 1, terms: 1, party: 'to', amount: (d) => docCalc(d).total, title: (d) => d.subject,
+    render: (d, x) => { const m = moneyTable(d, PRICE_COLS); return `${titleHTML('عرض سعر', x.no, [['التاريخ', docDate(d.doc_date)], ['ساري حتى', docDate(d.valid)]])}
+      <div class="to">السادة / <b>${esc(d.to)}</b>${d.attn ? `<br>عناية / ${esc(d.attn)}` : ''}</div><div class="muted">تحية طيبة وبعد،،،</div>${d.subject ? `<div class="subj">الموضوع: ${esc(d.subject)}</div>` : ''}<p class="lead">${nl2br(d.intro)}</p>
+      ${m.html}${totalsHTML(m.c, d)}${d.payment || d.delivery ? `<p style="margin-top:4mm">${d.payment ? `<b>طريقة الدفع:</b> ${esc(d.payment)}<br>` : ''}${d.delivery ? `<b>التسليم:</b> ${esc(d.delivery)}` : ''}</p>` : ''}
+      ${termsHTML(d.terms)}<p class="closing">${esc(d.closing)}</p>${signsHTML([{ t: x.lh.sign_title || 'المدير العام', name: x.lh.sign_name }], 1)}`; } },
+  delivery: { t: 'إذن تسليم بضاعة', ic: 'truck', tone: '#059669', d: 'البضاعة اللي خرجت للعميل أو الموقع — بتوقيع المستلم والسائق',
+    fields: [{ k: 'to', t: 'العميل / الجهة', req: 1, list: 'customers' }, { k: 'site', t: 'عنوان / موقع التسليم' }, { k: 'invoice', t: 'رقم الفاتورة (لو فيه)', ltr: 1, ph: 'مثال: J-00012', hint: 'اكتب رقم الفاتورة ودوس "استيراد" تحت عشان الأصناف تتملى لوحدها' },
+      { k: 'driver', t: 'السائق / المندوب' }, { k: 'car', t: 'رقم السيارة' }, { k: 'receiver', t: 'اسم المستلم' }],
+    items: { cols: [{ k: 'desc', t: 'الصنف', w: 260 }, { k: 'unit', t: 'الوحدة', w: 80 }, { k: 'qty', t: 'الكمية', num: 1, w: 70 }, { k: 'note', t: 'ملاحظات', w: 150 }], products: 1, invoice: 1 }, terms: 1, party: 'to', title: (d) => d.site,
+    render: (d, x) => { const it = (d.items || []).filter((i) => String(i.desc || '').trim()); return `${titleHTML('إذن تسليم بضاعة', x.no, [['التاريخ', docDate(d.doc_date)], ['رقم الفاتورة', esc(d.invoice || '')]])}
+      <div class="box" style="padding:3mm 5mm">${rowK('العميل / الجهة:', esc(d.to))}${rowK('موقع التسليم:', esc(d.site))}<div style="display:flex;gap:10mm">${rowK('السائق:', esc(d.driver))}${rowK('رقم السيارة:', esc(d.car))}</div></div>
+      <table class="it"><thead><tr><th class="c">#</th><th>الصنف</th><th>الوحدة</th><th class="n">الكمية</th><th>ملاحظات</th></tr></thead><tbody>${it.map((i, n) => `<tr><td class="c">${n + 1}</td><td>${esc(i.desc)}</td><td>${esc(i.unit || '')}</td><td class="n"><b>${qf(i.qty)}</b></td><td>${esc(i.note || '')}</td></tr>`).join('') || '<tr><td colspan="5" class="muted" style="text-align:center">—</td></tr>'}</tbody></table>
+      <p class="muted">عدد الأصناف: ${it.length} — إجمالي الكميات: ${qf(it.reduce((s, i) => s + (+i.qty || 0), 0))}</p>${termsHTML(d.terms, 'إقرار المستلم')}
+      ${signsHTML([{ t: 'أمين المخزن' }, { t: 'المسلِّم (السائق)', name: d.driver }, { t: 'المستلم', name: d.receiver, sub: 'الاسم / الرقم القومي / التوقيع' }], 0)}`; } },
+  cash_receipt: { t: 'إيصال استلام نقدية', ic: 'cash', tone: '#d97706', d: 'استلمنا مبلغ من فلان — بالأرقام والحروف وطريقة الدفع',
+    fields: [{ k: 'from', t: 'استلمنا من السيد / السادة', req: 1, list: 'customers' }, { k: 'amount', t: 'المبلغ (ج.م)', type: 'money', req: 1 }, { k: 'for', t: 'وذلك قيمة', full: 1, ph: 'مثال: دفعة من حساب بضاعة / مقدم عرض السعر رقم …' },
+      { k: 'method', t: 'طريقة الدفع', type: 'select', opts: ['نقداً', 'تحويل بنكي', 'إنستاباي', 'محفظة إلكترونية', 'فيزا'] }, { k: 'ref', t: 'رقم العملية / المرجع', ltr: 1 }],
+    hint: 'الإيصال ده مطبوع بس — لو الفلوس دي على حساب عميل سجّلها كمان من "سندات القبض والصرف" عشان رصيده يتظبط.', terms: 0, party: 'from', amount: (d) => +d.amount || 0, title: (d) => d.for,
+    render: (d, x) => `${titleHTML('إيصال استلام نقدية', x.no, [['التاريخ', docDate(d.doc_date)]])}
+      <div class="box">${rowK('استلمنا من السيد / السادة:', esc(d.from))}<div class="row2"><span class="k">مبلغاً وقدره:</span><span class="amt">${money(d.amount)} ج.م</span></div>
+      <div class="words" style="margin:3mm 0">${esc(tafqit(d.amount))}</div>${rowK('وذلك قيمة:', esc(d.for))}${rowK('طريقة الدفع:', esc(d.method || 'نقداً') + (d.ref ? ` — رقم العملية: <span class="ltr">${esc(d.ref)}</span>` : ''))}</div>
+      ${signsHTML([{ t: 'المستلم', name: x.user }, { t: 'المحاسب' }], 1)}` },
+  cheque_receipt: { t: 'إيصال استلام شيكات', ic: 'cheque', tone: '#0e7490', d: 'شيك أو أكتر استلمناهم — رقم وبنك واستحقاق كل شيك والإجمالي بالحروف',
+    fields: [{ k: 'from', t: 'استلمنا من السيد / السادة', req: 1, list: 'customers' }, { k: 'for', t: 'وذلك قيمة', full: 1, ph: 'مثال: سداد مديونية / قيمة فاتورة رقم …' }],
+    items: { cols: [{ k: 'no', t: 'رقم الشيك', w: 120, ltr: 1 }, { k: 'bank', t: 'البنك', w: 160 }, { k: 'due', t: 'تاريخ الاستحقاق', w: 140, date: 1 }, { k: 'amount', t: 'المبلغ', num: 1, w: 110 }], cheques: 1 }, terms: 1, party: 'from',
+    amount: (d) => r2((d.items || []).reduce((s, i) => s + (+i.amount || 0), 0)), title: (d) => d.for,
+    render: (d, x) => { const it = (d.items || []).filter((i) => i.no || +i.amount); const tot = r2(it.reduce((s, i) => s + (+i.amount || 0), 0)); return `${titleHTML('إيصال استلام شيكات', x.no, [['التاريخ', docDate(d.doc_date)], ['عدد الشيكات', it.length]])}
+      <p class="lead">استلمنا من السيد / السادة: <b>${esc(d.from)}</b> الشيكات الموضحة بعد${d.for ? `، وذلك قيمة: <b>${esc(d.for)}</b>` : ''}:</p>
+      <table class="it"><thead><tr><th class="c">#</th><th>رقم الشيك</th><th>البنك</th><th>تاريخ الاستحقاق</th><th class="n">المبلغ</th></tr></thead><tbody>${it.map((i, n) => `<tr><td class="c">${n + 1}</td><td><span class="ltr">${esc(i.no || '')}</span></td><td>${esc(i.bank || '')}</td><td>${esc(docDate(i.due))}</td><td class="n"><b>${money(i.amount)}</b></td></tr>`).join('') || '<tr><td colspan="5" class="muted" style="text-align:center">—</td></tr>'}</tbody></table>
+      <div class="tots"><div class="words">${esc(tafqit(tot))}</div><table class="tt"><tr class="g"><td>الإجمالي</td><td class="n">${money(tot)} ج.م</td></tr></table></div>${termsHTML(d.terms, 'ملاحظات')}
+      ${signsHTML([{ t: 'المستلم', name: x.user }, { t: 'المُسلِّم', name: d.from }], 1)}`; } },
+  authorization: { t: 'تفويض', ic: 'shield', tone: '#7c3aed', d: 'تفويض شخص باستلام بضاعة أو تحصيل مبالغ أو استلام شيكات نيابة عن الشركة',
+    fields: [{ k: 'to', t: 'السادة / الجهة الموجَّه إليها', list: 'suppliers', ph: 'مثال: شركة جوتن مصر — فرع العبور' }, { k: 'person', t: 'اسم المفوَّض', req: 1 }, { k: 'nid', t: 'الرقم القومي للمفوَّض', ltr: 1 },
+      { k: 'job', t: 'الوظيفة', ph: 'مثال: مندوب مشتريات' }, { k: 'purpose', t: 'الغرض', type: 'select', opts: PURPOSES }, { k: 'details', t: 'التفاصيل', type: 'textarea', full: 1, rows: 3, ph: 'مثال: استلام طلبية الدهانات الخاصة بأمر الشراء رقم PO-J-00003' },
+      { k: 'from_d', t: 'ساري من', type: 'date', def: () => ymd(new Date()) }, { k: 'to_d', t: 'ساري حتى', type: 'date', def: () => { const x = new Date(); x.setDate(x.getDate() + 7); return ymd(x); } }],
+    terms: 1, party: 'person', title: (d) => d.purpose,
+    render: (d, x) => `${titleHTML('تفويض', x.no, [['التاريخ', docDate(d.doc_date)]])}${d.to ? `<div class="to">السادة / <b>${esc(d.to)}</b></div><div class="muted">تحية طيبة وبعد،،،</div>` : ''}
+      <p class="lead" style="margin-top:4mm">تفوِّض <b>${esc(x.lh.name || S.settings.company_name || '')}</b> السيد / <b>${esc(d.person)}</b>${d.nid ? ` — حامل الرقم القومي (<span class="ltr">${esc(d.nid)}</span>)` : ''}${d.job ? ` — ويعمل ${esc(d.job)}` : ''}،
+      في <b>${esc(d.purpose || '')}</b> نيابةً عنها${d.to ? ` لدى ${esc(d.to)}` : ''}${d.from_d ? `، وذلك اعتباراً من <b>${docDate(d.from_d)}</b>` : ''}${d.to_d ? ` وحتى <b>${docDate(d.to_d)}</b>` : ''}.</p>
+      ${d.details ? `<div class="box">${nl2br(d.details)}</div>` : ''}<p class="muted">وهذا تفويض منا بذلك، دون أدنى مسؤولية عليكم.</p>${termsHTML(d.terms, 'ملاحظات')}
+      <div class="signs"><div class="sg"><b>نموذج توقيع المفوَّض</b><span>${esc(d.person)}</span><i></i><small>التوقيع</small></div><div class="sg"><b>المفوِّض — ${esc(x.lh.sign_title || 'المدير العام')}</b><span>${esc(x.lh.sign_name || '')}</span><i></i><small>التوقيع</small></div><div class="sg"><b>ختم الشركة</b><div class="stampbox">الختم</div></div></div>` },
+  debt_ack: { t: 'إقرار مديونية', ic: 'users', tone: '#dc2626', d: 'العميل أو المقاول يقر إن عليه مبلغ ويتعهد بسداده — بالحروف وبشهود',
+    fields: [{ k: 'debtor', t: 'اسم المُقِر (العميل / المقاول)', req: 1, list: 'customers', hint: 'لو اخترت عميل مسجل، المبلغ بيتملى من رصيده' }, { k: 'nid', t: 'الرقم القومي', ltr: 1 }, { k: 'address', t: 'العنوان' }, { k: 'phone', t: 'الموبايل', ltr: 1 },
+      { k: 'amount', t: 'المبلغ (ج.م)', type: 'money', req: 1 }, { k: 'reason', t: 'وذلك قيمة', ph: 'مثال: بضاعة دهانات ومستلزمات تسلّمتها' }, { k: 'schedule', t: 'طريقة / مواعيد السداد', type: 'textarea', full: 1, rows: 3, ph: 'مثال: على 4 أقساط شهرية متساوية — أول قسط يوم 1 ديسمبر' },
+      { k: 'w1', t: 'الشاهد الأول' }, { k: 'w2', t: 'الشاهد الثاني' }],
+    terms: 1, party: 'debtor', amount: (d) => +d.amount || 0, title: (d) => d.reason,
+    render: (d, x) => `${titleHTML('إقرار مديونية', x.no, [['التاريخ', docDate(d.doc_date)]])}
+      <p class="lead" style="margin-top:5mm;line-height:2.2">أقر أنا الموقِّع أدناه / <b>${esc(d.debtor)}</b>${d.nid ? ` — حامل الرقم القومي (<span class="ltr">${esc(d.nid)}</span>)` : ''}${d.address ? ` — والمقيم في ${esc(d.address)}` : ''}${d.phone ? ` — موبايل <span class="ltr">${esc(d.phone)}</span>` : ''}،
+      بأن في ذمتي مبلغاً وقدره <span class="amt">${money(d.amount)} ج.م</span><br><b>(${esc(tafqit(d.amount))})</b><br>لصالح <b>${esc(x.lh.name || S.settings.company_name || '')}</b>${d.reason ? `، وذلك قيمة ${esc(d.reason)}` : ''}.</p>
+      ${d.schedule ? `<div class="box"><b>وأتعهد بالسداد على النحو التالي:</b><br>${nl2br(d.schedule)}</div>` : ''}${termsHTML(d.terms, 'التعهد')}
+      ${signsHTML([{ t: 'المُقِر بما فيه', name: d.debtor, sub: 'التوقيع / البصمة' }, { t: 'الشاهد الأول', name: d.w1 }, { t: 'الشاهد الثاني', name: d.w2 }], 0)}` },
+  purchase_order: { t: 'أمر شراء لمورد', ic: 'factory', tone: '#0891b2', d: 'طلب بضاعة رسمي للمورد بالأصناف والكميات — ممكن يتملى من النواقص',
+    fields: [{ k: 'to', t: 'السادة / المورد', req: 1, list: 'suppliers' }, { k: 'attn', t: 'عناية السيد' }, { k: 'deliver_by', t: 'مطلوب التوريد قبل', type: 'date' }, { k: 'place', t: 'مكان التوريد', ph: 'مثال: معرض جوتن — العنوان' }, { k: 'payment', t: 'طريقة الدفع', full: 1 }],
+    items: { money: 1, products: 1, cost: 1, low: 1 }, vat: 1, terms: 1, party: 'to', amount: (d) => docCalc(d).total, title: (d) => d.place,
+    render: (d, x) => { const c = docCalc(d); const priced = c.items.some((i) => +i.price); const m = moneyTable(d, priced ? PRICE_COLS : PRICE_COLS.slice(0, 3)); return `${titleHTML('أمر شراء', x.no, [['التاريخ', docDate(d.doc_date)], ['التوريد قبل', docDate(d.deliver_by)]])}
+      <div class="to">السادة / <b>${esc(d.to)}</b>${d.attn ? `<br>عناية / ${esc(d.attn)}` : ''}</div><div class="muted">تحية طيبة وبعد،،،</div><p class="lead">برجاء التكرم بتوريد الأصناف الموضحة بعد${d.place ? ` إلى: <b>${esc(d.place)}</b>` : ''}:</p>
+      ${m.html}${priced ? totalsHTML(m.c, d) : ''}${d.payment ? `<p><b>طريقة الدفع:</b> ${esc(d.payment)}</p>` : ''}${termsHTML(d.terms)}<p class="closing">وتفضلوا بقبول فائق الاحترام،،،</p>
+      ${signsHTML([{ t: 'مسؤول المشتريات', name: x.user }, { t: x.lh.sign_title || 'المدير العام', name: x.lh.sign_name }], 1)}`; } },
+  letter: { t: 'خطاب رسمي', ic: 'letter', tone: '#475569', d: 'جواب على ورق الشركة لأي غرض — لشركة أو جهة أو بنك',
+    fields: [{ k: 'to', t: 'السادة / الجهة', req: 1, list: 'customers' }, { k: 'attn', t: 'عناية السيد' }, { k: 'subject', t: 'الموضوع', full: 1 }, { k: 'greet', t: 'التحية', def: 'تحية طيبة وبعد،،،' },
+      { k: 'body', t: 'نص الخطاب', type: 'textarea', full: 1, rows: 9, req: 1 }, { k: 'closing', t: 'الختام', def: 'وتفضلوا بقبول فائق الاحترام والتقدير،،،' }],
+    terms: 0, party: 'to', title: (d) => d.subject,
+    render: (d, x) => `${titleHTML('خطاب', x.no, [['التاريخ', docDate(d.doc_date)]])}<div class="to">السادة / <b>${esc(d.to)}</b>${d.attn ? `<br>عناية / ${esc(d.attn)}` : ''}</div>
+      ${d.subject ? `<div class="subj">الموضوع: ${esc(d.subject)}</div>` : ''}<p>${esc(d.greet)}</p><div class="lead" style="line-height:2.1">${lines(d.body).map((p) => `<p>${esc(p)}</p>`).join('')}</div><p class="closing">${esc(d.closing)}</p>
+      ${signsHTML([{ t: x.lh.sign_title || 'المدير العام', name: x.lh.sign_name }], 1)}` },
+  return_note: { t: 'إذن مرتجع / استبدال', ic: 'layers', tone: '#b45309', d: 'العميل رجّع أو بدّل بضاعة — الأصناف والسبب وبتوقيع الطرفين',
+    fields: [{ k: 'to', t: 'العميل', req: 1, list: 'customers' }, { k: 'phone', t: 'الموبايل', ltr: 1 }, { k: 'invoice', t: 'رقم الفاتورة الأصلية', ltr: 1, hint: 'اكتب رقم الفاتورة ودوس "استيراد" عشان أصنافها تنزل' },
+      { k: 'type', t: 'النوع', type: 'select', opts: ['مرتجع', 'استبدال', 'مرتجع واستبدال'] }, { k: 'refund', t: 'المبلغ المرتد للعميل (ج.م)', type: 'money' }, { k: 'refund_how', t: 'طريقة الرد', type: 'select', opts: ['نقداً', 'خصم من حساب العميل', 'رصيد للشراء لاحقاً', 'لا يوجد'] }],
+    items: { cols: [{ k: 'desc', t: 'الصنف', w: 240 }, { k: 'qty', t: 'الكمية', num: 1, w: 70 }, { k: 'dir', t: 'مرتجع / بديل', w: 110, opts: ['مرتجع', 'بديل'] }, { k: 'note', t: 'السبب / الحالة', w: 170 }], products: 1, invoice: 1 }, terms: 1, party: 'to', amount: (d) => +d.refund || 0, title: (d) => d.type,
+    render: (d, x) => { const it = (d.items || []).filter((i) => String(i.desc || '').trim()); return `${titleHTML('إذن ' + (d.type || 'مرتجع'), x.no, [['التاريخ', docDate(d.doc_date)], ['على فاتورة', esc(d.invoice || '')]])}
+      <div class="box" style="padding:3mm 5mm">${rowK('العميل:', esc(d.to) + (d.phone ? ` — <span class="ltr">${esc(d.phone)}</span>` : ''))}</div>
+      <table class="it"><thead><tr><th class="c">#</th><th>الصنف</th><th class="n">الكمية</th><th>مرتجع / بديل</th><th>السبب / الحالة</th></tr></thead><tbody>${it.map((i, n) => `<tr><td class="c">${n + 1}</td><td>${esc(i.desc)}</td><td class="n"><b>${qf(i.qty)}</b></td><td>${esc(i.dir || 'مرتجع')}</td><td>${esc(i.note || '')}</td></tr>`).join('') || '<tr><td colspan="5" class="muted" style="text-align:center">—</td></tr>'}</tbody></table>
+      ${+d.refund ? `<div class="tots"><div class="words">${esc(tafqit(d.refund))}</div><table class="tt"><tr class="g"><td>المبلغ المرتد (${esc(d.refund_how || '')})</td><td class="n">${money(d.refund)} ج.م</td></tr></table></div>` : ''}
+      ${termsHTML(d.terms, 'الشروط')}${signsHTML([{ t: 'العميل', name: d.to }, { t: 'الموظف المختص', name: x.user }, { t: 'اعتماد المدير' }], 0)}`; } },
+};
+const DEF_TERMS = {
+  quote: 'الأسعار بالجنيه المصري وشاملة ضريبة القيمة المضافة.\nالعرض ساري حتى التاريخ المذكور، والأسعار قابلة للتغيير بعده حسب أسعار الشركات المنتجة.\nالكميات تقديرية، والمحاسبة على الكميات المسلَّمة فعلياً.\nالبضاعة المباعة لا تُرد إلا بحالتها الأصلية وخلال 14 يوماً من تاريخ الاستلام.',
+  delivery: 'استلمت البضاعة الموضحة أعلاه كاملة وبحالة جيدة، وبالكميات المذكورة، ولا يحق لي الرجوع بأي نقص بعد التوقيع.',
+  cheque_receipt: 'قيمة الشيكات لا تُعتبر مسددة إلا بعد صرفها فعلياً من البنك.\nفي حالة ارتداد أي شيك يحق للشركة المطالبة بقيمته بكافة الطرق القانونية.',
+  authorization: 'هذا التفويض ساري للغرض المذكور فقط وخلال المدة المحددة.\nتوقيع المفوَّض المرفق معتمد لدينا.',
+  debt_ack: 'وهذا إقرار مني بذلك وأنا بكامل أهليتي المعتبرة شرعاً وقانوناً.\nفي حالة التأخر عن السداد في المواعيد المذكورة يحق للدائن المطالبة بكامل المبلغ واتخاذ كافة الإجراءات القانونية.',
+  purchase_order: 'التوريد بنفس المواصفات والماركات المذكورة، وأي صنف مخالف يُرد على حساب المورد.\nبرجاء إرفاق فاتورة ضريبية مع البضاعة.\nبرجاء ذكر رقم أمر الشراء على الفاتورة وإذن التسليم.',
+  return_note: 'الأصناف المرتجعة بحالتها الأصلية وفي عبواتها المغلقة.\nالألوان المخصوصة (المخلوطة على الماكينة) لا تُرد ولا تُستبدل.',
+};
+const docTerms = (k, lh) => (lh.terms && lh.terms[k] != null && lh.terms[k] !== '' ? lh.terms[k] : DEF_TERMS[k] || '');
+function docHTML(kind, d, meta) {
+  const lh = meta.lh || {}; const br = branchOf(meta.branch_id || curBranch()) || {};
+  return `<div class="pg">${lh.watermark && lh.logo ? `<img class="wm" src="${esc(lh.logo)}" alt="">` : ''}${meta.void ? '<div class="void">ملغي</div>' : ''}${lhHeader(lh, br)}<div class="body">${DOCS[kind].render(d, { ...meta, lh })}</div>${lhFooter(lh, br)}</div>`;
+}
+const docFrame = (html, lh) => `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><style>${docCSS(lh)}</style></head><body>${html}</body></html>`;
+const printDoc = (html, lh) => printHTML(html, false, docCSS(lh));
+
+/* ---------- نموذج المستند: خانات على اليمين ومعاينة حية للورقة على الشمال ---------- */
+async function docForm(kind, init = {}, existing = null, onDone) {
+  const { _br, ...init0 } = init;
+  if (!existing && !_br && !curBranch()) return toast('اختار المعرض من فوق الأول', 'bad');
+  const spec = DOCS[kind]; const lh = await loadLH(); const br = existing ? existing.branch_id : _br || curBranch();
+  const d = { doc_date: ymd(new Date()), items: [], terms: spec.terms ? docTerms(kind, lh) : '', vat: false, vat_rate: 14, discount: 0, ...(existing ? existing.data : {}), ...init0 };
+  for (const f of spec.fields) if (d[f.k] == null) d[f.k] = typeof f.def === 'function' ? f.def() : f.def ?? (f.type === 'select' ? f.opts[0] : '');
+  if (spec.items && !d.items.length) d.items = [{}, {}, {}];
+  const fieldHTML = (f) => {
+    const v = d[f.k] ?? ''; let inp;
+    if (f.type === 'textarea') inp = `<textarea class="in" data-f="${f.k}" rows="${f.rows || 3}" placeholder="${esc(f.ph || '')}">${esc(v)}</textarea>`;
+    else if (f.type === 'select') inp = `<select class="in" data-f="${f.k}">${f.opts.map((o) => opt(o, o, v)).join('')}</select>`;
+    else inp = `<input class="in" data-f="${f.k}" type="${f.type === 'date' ? 'date' : f.type === 'money' ? 'number' : 'text'}" ${f.type === 'money' ? 'step="any" min="0"' : ''} ${f.list ? `list="dl-${f.k}"` : ''} ${f.ltr ? 'dir="ltr"' : ''} value="${esc(v)}" placeholder="${esc(f.ph || '')}">${f.list ? `<datalist id="dl-${f.k}"></datalist>` : ''}`;
+    return `<div class="field" ${f.full || f.type === 'textarea' ? 'style="grid-column:1/-1"' : ''}><label class="f">${f.t}${f.req ? ' *' : ''}</label>${inp}${f.hint ? `<div class="small faint">${f.hint}</div>` : ''}</div>`;
+  };
+  const icols = spec.items ? spec.items.cols || [{ k: 'desc', t: 'البيان / الصنف', w: 250 }, { k: 'unit', t: 'الوحدة', w: 75 }, { k: 'qty', t: 'الكمية', num: 1, w: 70 }, { k: 'price', t: 'السعر', num: 1, w: 95 }] : [];
+  const m = modal({ title: `${existing ? 'تعديل' : 'جديد:'} ${spec.t}${existing ? ' ' + existing.doc_no : ''}`, wide: 'xwide', body: `<div class="docf"><div class="docform">
+      ${spec.hint ? `<div class="card small" style="padding:8px 12px;margin-bottom:10px;background:var(--warn-soft);border-color:#fde68a">${spec.hint}</div>` : ''}
+      <div class="grid g2" style="gap:0 12px"><div class="field"><label class="f">التاريخ</label><input class="in" type="date" data-f="doc_date" value="${esc(d.doc_date)}"></div>${spec.fields.map(fieldHTML).join('')}</div>
+      ${spec.items ? `<div class="row" style="margin:6px 0"><b>${spec.items.money ? 'البنود والأسعار' : kind === 'cheque_receipt' ? 'الشيكات' : 'الأصناف'}</b><span class="sp"></span>
+        ${spec.items.products ? `<div style="position:relative;width:230px"><input class="in sm" id="dpp" placeholder="➕ أضف صنف من المخزن (بحث)" autocomplete="off"></div>` : ''}
+        ${spec.items.low ? '<button class="btn sm" id="dlow" title="الأصناف اللي وصلت لحد الطلب">📦 املأ من النواقص</button>' : ''}
+        ${spec.items.invoice ? '<button class="btn sm" id="dinv">⤓ استيراد من الفاتورة</button>' : ''}${spec.items.cheques && can('treasury') ? '<button class="btn sm" id="dchq">⤓ من الشيكات المسجلة</button>' : ''}</div>
+        <div class="tbl-wrap" style="max-height:34vh"><table class="t" style="table-layout:auto"><thead><tr><th style="width:28px;padding:8px 6px">#</th>${icols.map((c) => `<th style="width:${c.w}px;padding:8px 4px">${c.t}</th>`).join('')}${spec.items.money ? '<th class="n" style="padding:8px 6px">الإجمالي</th>' : ''}<th style="width:34px;padding:8px 4px"></th></tr></thead><tbody id="dit"></tbody></table></div>
+        <div class="row" style="margin:6px 0"><button class="btn sm" id="dadd">${icon('plus')}سطر</button><span class="sp"></span><span id="dsum" class="small"></span></div>
+        ${spec.items.money ? `<div class="grid g3" style="gap:0 12px"><div class="field"><label class="f">خصم (ج.م)</label><input class="in" type="number" step="any" min="0" data-f="discount" value="${esc(d.discount || '')}"></div>${spec.vat ? `<label class="chk" style="align-self:end;margin-bottom:12px"><input type="checkbox" data-f="vat" ${d.vat ? 'checked' : ''}> إضافة ضريبة قيمة مضافة</label><div class="field"><label class="f">نسبة الضريبة %</label><input class="in" type="number" step="any" data-f="vat_rate" value="${esc(d.vat_rate)}"></div>` : ''}</div>` : ''}` : ''}
+      ${spec.terms ? `<div class="field"><label class="f">${kind === 'quote' || kind === 'purchase_order' ? 'الشروط والأحكام' : 'الشروط / الملاحظات'} <span class="faint">(كل سطر بند — تقدر تعدّلها، والافتراضية بتتظبط من "ورق الشركة")</span></label><textarea class="in" data-f="terms" rows="4">${esc(d.terms)}</textarea></div>` : ''}
+    </div><div class="docprev"><div class="small muted" style="padding:6px 10px">معاينة الورقة (A4)</div><div class="docprev-in"><iframe id="dfr" title="معاينة"></iframe></div></div></div>`,
+    buttons: [{ t: `${icon('print')} حفظ وطباعة`, cls: 'pri', fn: () => save(true) }, { t: 'حفظ', fn: () => save(false) }, { t: 'معاينة بالحجم الكامل', fn: () => { const w = window.open('', '_blank'); if (w) { w.document.write(docFrame(docHTML(kind, d, meta()), lh)); w.document.close(); } return false; } }, { t: 'إلغاء' }] });
+  const mb = m.mb;
+  const meta = () => ({ lh, branch_id: br, no: existing ? existing.doc_no : '', user: existing ? existing.user_name : S.user.name });
+  const preview = debounce(() => { $('#dfr', mb).srcdoc = docFrame(docHTML(kind, d, meta()), lh); }, 250);
+  const rowTotal = (x) => r2((+x.qty || 0) * (+x.price || 0));
+  const renderItems = () => {
+    if (!spec.items) return;
+    const w = (c) => `width:100%;min-width:${Math.round(c.w * 0.5)}px`;
+    $('#dit', mb).innerHTML = d.items.map((x, i) => `<tr data-i="${i}"><td class="faint" style="padding:6px">${i + 1}</td>${icols.map((c) => `<td style="padding:5px 4px">${c.opts ? `<select class="in sm" data-c="${c.k}" style="${w(c)}">${c.opts.map((o) => opt(o, o, x[c.k])).join('')}</select>` : `<input class="in sm" data-c="${c.k}" ${c.num ? 'type="number" step="any"' : c.date ? 'type="date"' : ''} ${c.ltr ? 'dir="ltr"' : ''} value="${esc(x[c.k] ?? '')}" style="${w(c)}">`}</td>`).join('')}${spec.items.money ? `<td class="n num" data-tot style="padding:5px 6px;white-space:nowrap">${money(rowTotal(x))}</td>` : ''}<td style="padding:4px"><button class="btn ghost sm" data-del="${i}">✕</button></td></tr>`).join('');
+    sumLine();
+  };
+  const sumLine = () => {
+    const el = $('#dsum', mb); if (!el) return;
+    if (spec.items.money) { const c = docCalc(d); el.innerHTML = `الصافي: <b class="num">${money(c.total)}</b>`; }
+    else if (kind === 'cheque_receipt') el.innerHTML = `الإجمالي: <b class="num">${money(d.items.reduce((s, i) => s + (+i.amount || 0), 0))}</b>`;
+    else el.innerHTML = `${d.items.filter((i) => String(i.desc || '').trim()).length} صنف`;
+  };
+  mb.addEventListener('input', (e) => {
+    const t = e.target;
+    if (t.dataset.f) { d[t.dataset.f] = t.type === 'checkbox' ? t.checked : t.value; if (spec.items) sumLine(); }
+    else if (t.dataset.c) { const tr = t.closest('tr[data-i]'); const x = d.items[+tr.dataset.i]; x[t.dataset.c] = t.value; const td = $('[data-tot]', tr); if (td) td.textContent = money(rowTotal(x)); sumLine(); }
+    else return; preview();
+  });
+  mb.addEventListener('click', (e) => { const b = e.target.closest('[data-del]'); if (!b) return; d.items.splice(+b.dataset.del, 1); if (!d.items.length) d.items.push({}); renderItems(); preview(); });
+  if ($('#dadd', mb)) $('#dadd', mb).onclick = () => { d.items.push({}); renderItems(); const ins = $$('#dit tr:last-child input', mb); if (ins[0]) ins[0].focus(); };
+  const addItem = (it) => { const empty = d.items.findIndex((x) => !String(x.desc || x.no || '').trim()); if (empty >= 0) d.items[empty] = it; else d.items.push(it); renderItems(); preview(); };
+  // أصناف المخزن
+  if ($('#dpp', mb)) {
+    const prods = await products().catch(() => []);
+    picker($('#dpp', mb), { items: () => prods, match: (p, q) => prodMatch(p, q), label: (p) => esc(p.name), sub: (p) => `${money(spec.items.cost && p.cost != null ? p.cost : p.price)} · متاح ${qf(p.stock)}`,
+      onPick: (p) => { $('#dpp', mb).value = ''; addItem({ desc: p.name, unit: p.unit || '', qty: 1, price: spec.items.cost ? (p.cost != null ? p.cost : '') : p.price, dir: 'مرتجع' }); } });
+    if ($('#dlow', mb)) $('#dlow', mb).onclick = () => { const low = prods.filter((p) => p.min_stock > 0 && p.stock <= p.min_stock); if (!low.length) return toast('مفيش أصناف وصلت لحد الطلب', 'ok'); d.items = d.items.filter((x) => String(x.desc || '').trim()); for (const p of low) d.items.push({ desc: p.name, unit: p.unit || '', qty: Math.max(1, r2(p.min_stock * 2 - p.stock)), price: p.cost != null ? p.cost : '' }); renderItems(); preview(); toast(`اتضاف ${low.length} صنف — الكمية المقترحة ضعف حد الطلب ناقص الرصيد، عدّلها براحتك`, 'ok'); };
+  }
+  if ($('#dinv', mb)) $('#dinv', mb).onclick = async () => {
+    const no = String(d.invoice || '').trim(); if (!no) return toast('اكتب رقم الفاتورة الأول', 'bad');
+    try {
+      const list = await GET('/api/sales', bq({ q: no, kind: 'sale' })); const s0 = list.find((x) => x.doc_no.toLowerCase() === no.toLowerCase() || String(x.no) === no.replace(/\D/g, '').replace(/^0+/, '')) || list[0];
+      if (!s0) return toast('مالقيتش فاتورة بالرقم ده (بيدور في فواتير المعرض الحالي)', 'bad');
+      const s = await GET('/api/sales/' + s0.id); const pr = await products().catch(() => []);
+      d.items = s.items.map((i) => ({ desc: i.name, unit: (pr.find((p) => p.id === i.product_id) || {}).unit || '', qty: i.qty, dir: 'مرتجع' })); d.invoice = s.doc_no;
+      if (!d.to) d.to = s.cust_name || s.customer_name || ''; if (kind === 'return_note' && !d.phone) d.phone = s.cust_phone || '';
+      $$('[data-f]', mb).forEach((i) => { if (i.type !== 'checkbox' && d[i.dataset.f] != null && i.value !== String(d[i.dataset.f])) i.value = d[i.dataset.f]; });
+      renderItems(); preview(); toast(`اتستورد ${s.items.length} صنف من ${s.doc_no}`, 'ok');
+    } catch (e) { toast(e.message, 'bad'); }
+  };
+  if ($('#dchq', mb)) $('#dchq', mb).onclick = async () => {
+    const all = await GET('/api/cheques', bq({ status: 'pending', direction: 'in' })).catch(() => []);
+    const mine = d.from ? all.filter((c) => (c.party_name || '').includes(d.from.trim()) || d.from.includes(c.party_name || '~')) : all;
+    if (!mine.length) return toast(d.from ? `مفيش شيكات تحت التحصيل باسم "${d.from}"` : 'مفيش شيكات تحت التحصيل', 'bad');
+    d.items = mine.map((c) => ({ no: c.cheque_no || '', bank: c.bank || '', due: c.due_date, amount: c.amount })); if (!d.from) { d.from = mine[0].party_name; $('[data-f=from]', mb).value = d.from; }
+    renderItems(); preview(); toast(`اتضاف ${mine.length} شيك`, 'ok');
+  };
+  // قوائم العملاء والموردين (للاقتراح وهو بيكتب) + ملء بيانات العميل
+  const custs = can('customers') ? await customers().catch(() => []) : [], supps = can('suppliers') || can('purchases') ? await suppliers().catch(() => []) : [];
+  for (const f of spec.fields.filter((x) => x.list)) {
+    const list = f.list === 'customers' ? custs.filter((c) => c.name !== 'عميل نقدي') : supps; const dl = $(`#dl-${f.k}`, mb); if (dl) dl.innerHTML = list.map((c) => `<option value="${esc(c.name)}">`).join('');
+    $(`[data-f=${f.k}]`, mb).addEventListener('change', (e) => {
+      const c = list.find((x) => x.name === e.target.value.trim()); if (!c) return;
+      const setF = (k, v) => { if (v == null || v === '' || d[k]) return; d[k] = v; const i = $(`[data-f=${k}]`, mb); if (i) i.value = v; };
+      setF('phone', c.phone); setF('address', c.address);
+      if (kind === 'debt_ack' && c.balance > 0) { d.amount = c.balance; $('[data-f=amount]', mb).value = c.balance; toast(`المبلغ اتملى من رصيد ${c.name}: ${money(c.balance)}`, 'ok'); }
+      preview();
+    });
+  }
+  const save = async (print) => {
+    for (const f of spec.fields) if (f.req && !String(d[f.k] ?? '').trim()) throw new Error(`اكتب "${f.t}"`);
+    if (spec.items) d.items = d.items.filter((x) => Object.values(x).some((v) => String(v ?? '').trim()));
+    const body = { kind, branch_id: br, doc_date: d.doc_date, party: d[spec.party] || '', title: spec.title ? spec.title(d) || '' : '', ...(spec.amount ? { amount: spec.amount(d) } : {}), data: d };
+    const r = existing ? await PUT('/api/documents/' + existing.id, body) : await POST('/api/documents', body);
+    toast(`اتحفظ ${spec.t} رقم ${r.doc_no} ✓`, 'ok');
+    if (print) printDoc(docHTML(kind, r.data, { lh, branch_id: r.branch_id, no: r.doc_no, user: r.user_name }), lh);
+    onDone && onDone(r);
+  };
+  renderItems(); preview();
+}
+
+/* ---------- عرض مستند من الأرشيف ---------- */
+async function docView(id, onChange) {
+  const [x, lh] = await Promise.all([GET('/api/documents/' + id), loadLH()]); const spec = DOCS[x.kind] || { t: x.kind };
+  const html = docHTML(x.kind, x.data || {}, { lh, branch_id: x.branch_id, no: x.doc_no, user: x.user_name, void: x.status === 'void' });
+  const editable = x.status === 'ok' && (isAdmin() || (x.user_id === S.user.id && x.date.slice(0, 10) === ymd(new Date())));
+  const m = modal({ title: `${spec.t} ${x.doc_no}`, wide: 'xwide', body: `<div class="row" style="margin-bottom:8px;gap:10px">${x.status === 'void' ? `<span class="badge bad">ملغي${x.void_reason ? ': ' + esc(x.void_reason) : ''}</span>` : '<span class="badge ok">سليم</span>'}${brName(x.branch_id)}<span class="small muted">عمله ${esc(x.user_name || '')} — ${esc(x.date.slice(0, 16))}${x.updated_at ? ` · اتعدّل ${esc(x.updated_at.slice(0, 16))}` : ''}</span></div>
+      <div class="docprev big"><div class="docprev-in"><iframe id="dvf" title="المستند"></iframe></div></div>`,
+    buttons: [{ t: `${icon('print')} طباعة`, cls: 'pri', fn: () => { printDoc(html, lh); return false; } },
+      ...(editable ? [{ t: 'تعديل', fn: () => { docForm(x.kind, {}, x, () => onChange && onChange()); } }] : []),
+      { t: 'نسخة جديدة منه', fn: () => { const c = { ...(x.data || {}) }; c.doc_date = ymd(new Date()); docForm(x.kind, c, null, () => onChange && onChange()); } },
+      ...(isAdmin() && x.status === 'ok' ? [{ t: 'إلغاء المستند', cls: 'bad', fn: async () => { const why = await promptBox('إلغاء المستند', 'السبب (اختياري)'); if (why === null) return false; await POST(`/api/documents/${x.id}/void`, { reason: why }); toast('اتلغى — بيفضل في الأرشيف بعلامة "ملغي"', 'ok'); onChange && onChange(); } }] : []),
+      { t: 'إغلاق' }] });
+  $('#dvf', m.mb).srcdoc = docFrame(html, lh);
+}
+
+/* ---------- ورق الشركة: اللوجو والألوان والبيانات والشروط الافتراضية ---------- */
+async function imgToDataURL(f, max = 600) {
+  if (/svg/.test(f.type) && f.size < 300000) return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+  const bmp = await createImageBitmap(f); const sc = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas'); c.width = Math.round(bmp.width * sc); c.height = Math.round(bmp.height * sc); c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  let u = c.toDataURL('image/png'); if (u.length > 350000) u = c.toDataURL('image/webp', 0.9); if (u.length > 650000) throw new Error('الصورة كبيرة — جرّب صورة أصغر'); return u;
+}
+async function letterheadForm(onDone) {
+  const lh0 = await loadLH(true);
+  const L = { style: 'band', color1: '#1e3a8a', color2: '#c8102e', name: S.settings.company_name || '', partners: [], terms: {}, ...lh0 }; L.partners = (L.partners || []).slice(); L.terms = { ...(L.terms || {}) };
+  const tk = Object.keys(DEF_TERMS);
+  const m = modal({ title: 'ورق الشركة — شكل كل المطبوعات', wide: 'xwide', body: `<div class="docf"><div class="docform">
+      <div class="grid g2" style="gap:0 12px">
+        <div class="field"><label class="f">اسم الشركة (عربي) *</label><input class="in" data-l="name" value="${esc(L.name || '')}"></div>
+        <div class="field"><label class="f">الاسم بالإنجليزي</label><input class="in" data-l="name_en" dir="ltr" value="${esc(L.name_en || '')}" placeholder="Everest Paints & Decor"></div>
+        <div class="field" style="grid-column:1/-1"><label class="f">سطر تحت الاسم</label><input class="in" data-l="subtitle" value="${esc(L.subtitle || '')}" placeholder="مثال: موزع معتمد لدهانات جوتن وباكين — دهانات · ديكورات · عزل"></div>
+        <div class="field"><label class="f">شكل الترويسة</label><select class="in" data-l="style">${[['band', 'شريط ملوّن (عصري)'], ['classic', 'كلاسيك أبيض بخط مزدوج'], ['minimal', 'بسيط في النص']].map(([k, t]) => opt(k, t, L.style)).join('')}</select></div>
+        <div class="field"><label class="f">الألوان (الأساسي / المميِّز)</label><div class="row" style="flex-wrap:nowrap"><input type="color" data-l="color1" value="${esc(L.color1)}" style="width:56px;height:38px;border:0;background:none"><input type="color" data-l="color2" value="${esc(L.color2)}" style="width:56px;height:38px;border:0;background:none"><span class="small faint">دوس على اللون وغيّره</span></div></div>
+      </div>
+      <div class="card" style="padding:10px 12px;margin:4px 0 10px"><b>اللوجو الأساسي</b> <span class="small faint">(يمين الورقة — PNG بخلفية شفافة أحسن)</span><div class="row" style="margin-top:6px" id="lgBox"></div>
+        <div style="margin-top:10px"><b>لوجوهات إضافية</b> <span class="small faint">(شركاء / توكيلات زي جوتن، باكين، جبال… لحد 4 — بتظهر على الشمال)</span><div class="row" style="margin-top:6px;gap:10px;flex-wrap:wrap" id="ptBox"></div></div>
+        <label class="chk" style="margin-top:8px"><input type="checkbox" data-l="watermark" ${L.watermark ? 'checked' : ''}> اللوجو باهت في نص الورقة (علامة مائية)</label></div>
+      <div class="grid g2" style="gap:0 12px">
+        <div class="field" style="grid-column:1/-1"><label class="f">العنوان</label><input class="in" data-l="address" value="${esc(L.address || '')}"></div>
+        <div class="field"><label class="f">التليفونات</label><input class="in" data-l="phones" dir="ltr" value="${esc(L.phones || '')}" placeholder="0101 121 3950 — 0128 063 9874"></div>
+        <div class="field"><label class="f">الإيميل</label><input class="in" data-l="email" dir="ltr" value="${esc(L.email || '')}"></div>
+        <div class="field"><label class="f">الموقع / فيسبوك</label><input class="in" data-l="website" dir="ltr" value="${esc(L.website || '')}"></div>
+        <label class="chk" style="align-self:end;margin-bottom:12px"><input type="checkbox" data-l="use_branch" ${L.use_branch ? 'checked' : ''}> استخدم عنوان وتليفون كل معرض</label>
+        <div class="field"><label class="f">الرقم الضريبي</label><input class="in" data-l="tax_no" dir="ltr" value="${esc(L.tax_no || '')}"></div>
+        <div class="field"><label class="f">السجل التجاري</label><input class="in" data-l="cr_no" dir="ltr" value="${esc(L.cr_no || '')}"></div>
+        <div class="field"><label class="f">اسم صاحب التوقيع</label><input class="in" data-l="sign_name" value="${esc(L.sign_name || '')}"></div>
+        <div class="field"><label class="f">صفته</label><input class="in" data-l="sign_title" value="${esc(L.sign_title || '')}" placeholder="المدير العام"></div>
+        <div class="field" style="grid-column:1/-1"><label class="f">سطر في آخر الورقة (اختياري)</label><input class="in" data-l="footer" value="${esc(L.footer || '')}" placeholder="مثال: نسعد بخدمتكم يومياً من 9 صباحاً حتى 11 مساءً"></div>
+      </div>
+      <details style="margin-top:6px"><summary style="cursor:pointer;font-weight:700">الشروط الافتراضية لكل مستند (اختياري)</summary>
+        ${tk.map((k) => `<div class="field" style="margin-top:8px"><label class="f">${DOCS[k].t}</label><textarea class="in" rows="3" data-t="${k}">${esc(docTerms(k, L))}</textarea></div>`).join('')}</details>
+    </div><div class="docprev"><div class="row" style="padding:6px 10px"><span class="small muted">معاينة على</span><select class="in sm" id="lpk" style="width:auto">${Object.entries(DOCS).map(([k, v]) => opt(k, v.t, 'quote')).join('')}</select></div><div class="docprev-in"><iframe id="lfr" title="معاينة"></iframe></div></div></div>`,
+    buttons: [{ t: 'حفظ ورق الشركة', cls: 'pri', fn: async () => {
+      if (!String(L.name || '').trim()) throw new Error('اكتب اسم الشركة');
+      for (const k of tk) { const v = $(`[data-t=${k}]`, mb).value; L.terms[k] = v.trim() === DEF_TERMS[k].trim() ? '' : v; }
+      S.lh = await PUT('/api/letterhead', { letterhead: L }); toast('اتحفظ ورق الشركة — كل المطبوعات هتطلع بالشكل ده ✓', 'ok'); onDone && onDone();
+    } }, { t: 'إلغاء' }] });
+  const mb = m.mb;
+  const sample = { quote: { to: 'شركة جبال للمقاولات', attn: 'م. أحمد سامي', subject: 'عرض أسعار دهانات مشروع فيلات التجمع', items: [{ desc: 'جوتن فينوماستيك — أبيض 18 لتر', unit: 'بستلة', qty: 12, price: 2735 }, { desc: 'معجون أكريليك 15 كجم', unit: 'شيكارة', qty: 20, price: 420 }, { desc: 'رول فوم 9 بوصة', unit: 'قطعة', qty: 15, price: 85 }], payment: '50% مقدم والباقي عند التسليم', delivery: 'خلال 3 أيام بموقع العميل' } };
+  const preview = debounce(() => {
+    const k = $('#lpk', mb).value; const s = DOCS[k];
+    const d = { doc_date: ymd(new Date()), terms: $(`[data-t=${k}]`, mb) ? $(`[data-t=${k}]`, mb).value : '', items: [], ...(sample[k] || {}) };
+    for (const f of s.fields) if (d[f.k] == null) d[f.k] = typeof f.def === 'function' ? f.def() : f.def ?? (f.type === 'select' ? f.opts[0] : f.type === 'money' ? 1500 : f.req ? 'مثال' : '');
+    $('#lfr', mb).srcdoc = docFrame(docHTML(k, d, { lh: L, branch_id: curBranch() || (S.branches[0] || {}).id, no: 'نموذج', user: S.user.name }), L);
+  }, 200);
+  const imgSlot = (src, label, onSet, onDel) => { const w = document.createElement('div'); w.className = 'lgslot'; w.innerHTML = `${src ? `<img src="${esc(src)}" alt="">` : `<span>${label}</span>`}<input type="file" accept="image/*" hidden>${onDel && src ? '<button class="btn ghost sm" data-rm title="شيل">✕</button>' : ''}`;
+    w.onclick = (e) => { if (e.target.closest('[data-rm]')) { e.stopPropagation(); onDel(); return; } $('input', w).click(); };
+    $('input', w).onchange = async (e) => { const f = e.target.files[0]; if (!f) return; try { onSet(await imgToDataURL(f)); } catch (er) { toast(er.message, 'bad'); } }; return w; };
+  const renderLogos = () => {
+    const lg = $('#lgBox', mb); lg.innerHTML = ''; lg.append(imgSlot(L.logo, '＋ ارفع اللوجو', (u) => { L.logo = u; renderLogos(); preview(); }, () => { L.logo = ''; renderLogos(); preview(); }));
+    const pt = $('#ptBox', mb); pt.innerHTML = '';
+    L.partners.forEach((p, i) => { const box = document.createElement('div'); box.style.cssText = 'display:flex;flex-direction:column;gap:4px;align-items:center'; box.append(imgSlot(p.img, '', (u) => { p.img = u; renderLogos(); preview(); }, () => { L.partners.splice(i, 1); renderLogos(); preview(); }));
+      const nm = document.createElement('input'); nm.className = 'in sm'; nm.placeholder = 'اسم (اختياري)'; nm.value = p.name || ''; nm.style.width = '110px'; nm.oninput = () => { p.name = nm.value; preview(); }; box.append(nm); pt.append(box); });
+    if (L.partners.length < 4) pt.append(imgSlot('', '＋ لوجو إضافي', (u) => { L.partners.push({ img: u, name: '' }); renderLogos(); preview(); }));
+  };
+  mb.addEventListener('input', (e) => { const t = e.target; if (t.dataset.l) L[t.dataset.l] = t.type === 'checkbox' ? t.checked : t.value; preview(); });
+  $('#lpk', mb).onchange = preview;
+  renderLogos(); preview();
+}
+
+/* ---------- صفحة المطبوعات: مستند جديد + الأرشيف ---------- */
+VIEWS.docs = async (el) => {
+  const st = S.docSt || (S.docSt = { ...newRange('month'), kind: '', q: '' });
+  const lh = await loadLH(true);
+  el.innerHTML = `${!lh.name && isAdmin() ? `<div class="card" style="padding:12px 16px;margin-bottom:14px;background:var(--pri-soft);display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span style="font-size:22px">🎨</span><div class="sp"><b>ابدأ بورق الشركة</b><div class="small muted">ارفع اللوجو واختار الألوان واكتب العنوان والتليفونات — مرة واحدة، وكل المطبوعات هتطلع بيها.</div></div><button class="btn pri" id="lhGo">تجهيز ورق الشركة</button></div>` : ''}
+    <div class="row" style="margin-bottom:10px"><h3 style="margin:0">مستند جديد</h3><span class="sp"></span>${isAdmin() ? `<button class="btn" id="lhBtn">🎨 ورق الشركة (اللوجو والألوان والبيانات)</button>` : ''}</div>
+    <div class="dkinds">${Object.entries(DOCS).map(([k, v]) => `<button class="dkind" data-k="${k}" style="--tone:${v.tone}"><span class="di">${icon(v.ic)}</span><span><b>${v.t}</b><small>${v.d}</small></span></button>`).join('')}</div>
+    <div class="row" style="margin:20px 0 10px"><h3 style="margin:0">الأرشيف</h3><span class="small muted">كل مستند بيتحفظ برقم مسلسل وتقدر تطبعه تاني أو تعمل نسخة منه</span></div>
+    <div class="toolbar"><select class="in" id="dk" style="width:auto">${opt('', 'كل الأنواع', st.kind)}${Object.entries(DOCS).map(([k, v]) => opt(k, v.t, st.kind)).join('')}</select>${rangeHTML(st)}<input class="in" id="dq" placeholder="الرقم أو الاسم" value="${esc(st.q)}" style="width:200px"><span class="sp"></span><button class="btn" id="csv">${icon('download')}Excel</button></div><div id="tb"></div>`;
+  let rows = [];
+  const cols = [{ t: 'الرقم', f: (r) => `<b class="num">${esc(r.doc_no)}</b>`, v: (r) => r.doc_no }, { t: 'النوع', f: (r) => `<span class="badge" style="background:color-mix(in srgb,${(DOCS[r.kind] || {}).tone || '#64748b'} 12%,transparent);color:${(DOCS[r.kind] || {}).tone || '#64748b'}">${esc((DOCS[r.kind] || { t: r.kind }).t)}</span>`, v: (r) => (DOCS[r.kind] || { t: r.kind }).t },
+    ...(showBranchCol() ? [{ t: 'المعرض', f: (r) => brName(r.branch_id), v: (r) => branchOf(r.branch_id).name }] : []), { t: 'التاريخ', f: (r) => `<span class="num">${esc(r.doc_date || r.date.slice(0, 10))}</span>`, v: (r) => r.doc_date },
+    { t: 'الجهة / الاسم', k: 'party' }, { t: 'البيان', k: 'title' }, { t: 'المبلغ', n: 1, f: (r) => (r.amount ? M(r.amount) : ''), v: (r) => r.amount ?? '' }, { t: 'عمله', k: 'user_name' },
+    { t: 'الحالة', f: (r) => (r.status === 'void' ? '<span class="badge bad">ملغي</span>' : '<span class="badge ok">سليم</span>'), v: (r) => (r.status === 'void' ? 'ملغي' : 'سليم') }];
+  const load = async () => { rows = await GET('/api/documents', bq({ kind: st.kind, q: st.q, from: st.from, to: st.to })); mountTable($('#tb', el), cols, rows, { click: (r) => docView(r.id, load), rowCls: (r) => (r.status === 'void' ? 'void' : ''), maxh: '55vh', empty: 'مفيش مستندات في الفترة دي — اختار نوع من فوق وابدأ' }); };
+  $$('.dkind', el).forEach((b) => (b.onclick = () => docForm(b.dataset.k, {}, null, load)));
+  if ($('#lhBtn', el)) $('#lhBtn', el).onclick = () => letterheadForm(() => route());
+  if ($('#lhGo', el)) $('#lhGo', el).onclick = () => letterheadForm(() => route());
+  $('#dk', el).onchange = (e) => { st.kind = e.target.value; load(); };
+  $('#dq', el).oninput = debounce((e) => { st.q = e.target.value.trim(); load(); }, 300);
+  bindRange(el, st, load);
+  $('#csv', el).onclick = () => exportCSV('أرشيف-المطبوعات', cols, rows);
+  await load();
 };
 
 boot();
