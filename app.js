@@ -360,7 +360,29 @@ function picker(input, o) {
   wrap.addEventListener('mousedown', (e) => { const d = e.target.closest('.dd [data-i]'); if (d) { e.preventDefault(); pick(list[+d.dataset.i]); } });
 }
 const prodMatch = (p, q) => (p.name || '').toLowerCase().includes(q) || String(p.code || '').toLowerCase() === q || String(p.code || '').toLowerCase().startsWith(q) || (p.barcode && String(p.barcode).includes(q)) || (p.category || '').toLowerCase().includes(q);
-const prodExact = (p, q) => (p.barcode && p.barcode === q) || String(p.code) === q;
+// قارئ الباركود بيكتب زي الكيبورد: نصلّح الأرقام العربي، والحروف لو الكيبورد كان على عربي، والأصفار في الأول
+const AR_KEYS = { 'ض': 'q', 'ص': 'w', 'ث': 'e', 'ق': 'r', 'ف': 't', 'غ': 'y', 'ع': 'u', 'ه': 'i', 'خ': 'o', 'ح': 'p', 'ش': 'a', 'س': 's', 'ي': 'd', 'ب': 'f', 'ل': 'g', 'ا': 'h', 'ت': 'j', 'ن': 'k', 'م': 'l', 'ئ': 'z', 'ء': 'x', 'ؤ': 'c', 'ر': 'v', 'ى': 'n', 'ة': 'm', 'ز': '.', 'و': ',', 'ك': ';', 'ط': "'", 'ظ': '/' };
+const scanNorm = (s) => String(s ?? '').trim().replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/لا/g, 'b').replace(/[؀-ۿ]/g, (c) => AR_KEYS[c] ?? c);
+const sameCode = (a, b) => { a = scanNorm(a).toLowerCase(); b = scanNorm(b).toLowerCase(); if (!a || !b) return false; return a === b || (/^\d+$/.test(a) && /^\d+$/.test(b) && a.replace(/^0+/, '') === b.replace(/^0+/, '')); };
+const prodExact = (p, q) => (p.barcode && sameCode(p.barcode, q)) || sameCode(p.code, q);
+const looksLikeBarcode = (q) => /^[0-9a-z\-]{6,}$/i.test(scanNorm(q)) && /\d{4,}/.test(scanNorm(q));
+// باركود مش متسجل: نربطه بصنف (مرة واحدة وبعد كده بيتعرف لوحده)
+function linkBarcode(code, prods, onLinked) {
+  code = scanNorm(code);
+  if (!can('products')) return toast(`الباركود ${code} مش متسجل على أي صنف — اطلب من المدير يربطه من "الأصناف والأسعار"`, 'bad');
+  let chosen = null;
+  const m = modal({ title: 'باركود جديد — اربطه بصنف', body: `<p style="margin-top:0">الباركود <b class="num" dir="ltr">${esc(code)}</b> مش متسجل على أي صنف. اختار الصنف بتاعه، وبعد كده لما تمسحه هيتعرف لوحده.</p>
+      <div class="field"><label class="f">الصنف</label><div style="position:relative"><input class="in" id="lbp" placeholder="اكتب اسم الصنف أو الكود" autocomplete="off"></div><div class="small muted" id="lbs" style="margin-top:4px"></div></div>`,
+    buttons: [{ t: 'ربط وإضافة للفاتورة', cls: 'pri', fn: async () => {
+      if (!chosen) throw new Error('اختار الصنف من القائمة');
+      const other = prods.find((p) => p.id !== chosen.id && p.barcode && sameCode(p.barcode, code)); if (other) throw new Error(`الباركود ده متسجل بالفعل على "${other.name}"`);
+      if (chosen.barcode && !(await confirmBox(`الصنف "${esc(chosen.name)}" عليه باركود تاني (${esc(chosen.barcode)}) — هيتغيّر للجديد. موافق؟`))) return false;
+      await PUT('/api/products/' + chosen.id, { ...chosen, barcode: code }); chosen.barcode = code; S.cache['p' + curBranch()] = null;
+      toast(`اتربط الباركود بـ "${chosen.name}" ✓`, 'ok'); onLinked && onLinked(chosen);
+    } }, { t: 'إلغاء' }],
+    onOpen: (mb) => picker($('#lbp', mb), { items: () => prods, match: (p, q) => prodMatch(p, q), label: (p) => esc(p.name), sub: (p) => `كود ${esc(p.code)}${p.barcode ? ' · عليه باركود' : ''}`, onPick: (p) => { chosen = p; $('#lbp', mb).value = p.name; $('#lbs', mb).innerHTML = p.barcode ? `<span class="warn">عليه باركود حالياً: ${esc(p.barcode)} — هيتغيّر</span>` : 'الصنف معندوش باركود — هيتسجل عليه ده'; } }) });
+  return m;
+}
 
 /* ---------------------------- Data cache ---------------------------- */
 async function products(force) {
@@ -1043,6 +1065,9 @@ function beep() {
   if (!LS.get('pos_sound', true)) return;
   try { const c = new (window.AudioContext || window.webkitAudioContext)(); const o = c.createOscillator(); const g = c.createGain(); o.frequency.value = 880; g.gain.setValueAtTime(0.08, c.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + 0.35); o.connect(g); g.connect(c.destination); o.start(); o.stop(c.currentTime + 0.35); } catch {}
 }
+// صوت قصير مع المسح: نغمة عالية = الصنف اتضاف، واطية = باركود مش معروف
+function tone(freq, dur) { try { const c = S.audio || (S.audio = new (window.AudioContext || window.webkitAudioContext)()); const o = c.createOscillator(); const g = c.createGain(); o.frequency.value = freq; g.gain.setValueAtTime(0.06, c.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur); o.connect(g); g.connect(c.destination); o.start(); o.stop(c.currentTime + dur); } catch {} }
+const beepOk = () => tone(1320, 0.09), beepBad = () => tone(220, 0.3);
 
 /* =====================================================================
    نقطة البيع
@@ -1155,15 +1180,31 @@ VIEWS.pos = async (el) => {
     $$('[data-d]', m.mb).forEach((b) => (b.onclick = async () => { if (!(await confirmBox('حذف الفاتورة المعلقة؟', 'حذف', 'bad'))) return; LS.set(heldKey, held().filter((x) => x.id !== +b.dataset.d)); m.close(); renderHeldBtn(); showHeld(); }));
   };
   // events
-  pg.onclick = (e) => { const b = e.target.closest('[data-id]'); if (!b) return; add(prods.find((p) => p.id === +b.dataset.id)); };
+  pg.onclick = (e) => { const b = e.target.closest('[data-id]'); if (!b) return; add(prods.find((p) => p.id === +b.dataset.id)); ps.focus(); }; // نرجع للبحث عشان المسح اللي بعده يشتغل
   ps.oninput = debounce(renderGrid, 120);
+  // كود/باركود اتكتب أو اتمسح: صنف مطابق ← يتضاف، باركود مش معروف ← نعرض ربطه بصنف
+  const takeCode = (q) => {
+    const ex = prods.find((p) => prodExact(p, q));
+    if (ex) { add(ex); beepOk(); return true; }
+    if (looksLikeBarcode(q)) { beepBad(); linkBarcode(q, prods, (p) => { add(p); ps.focus(); }); return true; }
+    return false;
+  };
   ps.onkeydown = (e) => {
     if (e.key === 'Enter') {
+      e.preventDefault();
       const q = ps.value.trim(); if (!q) return;
-      const ex = prods.find((p) => prodExact(p, q)); const list = visible();
-      const p = ex || (list.length ? list[0] : null);
-      if (p) { add(p); ps.value = ''; renderGrid(); } else toast('مفيش صنف بالكود/الباركود ده', 'bad');
+      if (takeCode(q)) { ps.value = ''; renderGrid(); return; }
+      const list = visible();
+      if (list.length) { add(list[0]); ps.value = ''; renderGrid(); } else toast('مفيش صنف بالكود/الباركود ده', 'bad');
     } else if (e.key === 'Escape') { ps.value = ''; renderGrid(); }
+  };
+  // المسح وانت مش واقف في خانة البحث (دوست على صنف أو زرار): القارئ بيكتب بسرعة جداً وبعدين Enter
+  const scan = { buf: '', last: 0 };
+  S.posScan = (e) => {
+    const t = e.target; if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+    const now = Date.now();
+    if (e.key === 'Enter') { if (scan.buf.length >= 3 && now - scan.last < 150) { e.preventDefault(); const q = scan.buf; scan.buf = ''; if (!takeCode(q)) toast(`مفيش صنف بالكود/الباركود ${scanNorm(q)}`, 'bad'); ps.focus(); } scan.buf = ''; return; }
+    if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) { if (now - scan.last > 150) scan.buf = ''; scan.buf += e.key; scan.last = now; }
   };
   $('#filters', el).onclick = (e) => {
     const b = e.target.closest('[data-b]'); if (b) { st.brand = b.dataset.b; st.cat = ''; renderFilters(); renderGrid(); return; }
@@ -1236,8 +1277,9 @@ VIEWS.pos = async (el) => {
   $('#pay', el).onclick = checkout;
   S.posKeys = (e) => {
     if (S.view !== 'pos' || $('.ov')) return;
-    if (e.key === 'F2') { e.preventDefault(); ps.focus(); ps.select(); }
-    if (e.key === 'F9') { e.preventDefault(); checkout(); }
+    if (e.key === 'F2') { e.preventDefault(); ps.focus(); ps.select(); return; }
+    if (e.key === 'F9') { e.preventDefault(); checkout(); return; }
+    S.posScan(e);
   };
   renderGrid(); renderCart(); renderCust(); ps.focus();
 };
@@ -1488,7 +1530,7 @@ function bulkAdd(existing, onDone) {
 function productForm(p, onSave, list) {
   const sc = can('see_cost'); const isNew = !p; p = p || { active: 1, unit: 'علبة', min_stock: 0 };
   const cats = catSuggestions(list);
-  modal({
+  const pm = modal({
     title: isNew ? 'صنف جديد' : 'تعديل صنف', wide: 'wide',
     body: `<datalist id="dlc">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist><datalist id="dlu">${(S.settings.units || []).map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
       <div class="grid g2"><div class="field" style="grid-column:1/-1"><label class="f">اسم الصنف *</label><input class="in" name="name" value="${esc(p.name)}"></div>
@@ -1519,6 +1561,10 @@ function productForm(p, onSave, list) {
       { t: 'إلغاء' },
     ],
   });
+  // القارئ بيضغط Enter بعد الباركود: ننقل للخانة اللي بعدها بدل ما النافذة تتحفظ ناقصة
+  const bi = $('[name=barcode]', pm.mb);
+  bi.addEventListener('keydown', (e) => { if (e.key !== 'Enter') return; e.preventDefault(); e.stopPropagation(); bi.value = scanNorm(bi.value); const dup = (list || S.cache['p' + curBranch()] || []).find((x) => x.id !== p.id && x.barcode && sameCode(x.barcode, bi.value)); if (dup) toast(`الباركود ده متسجل على "${dup.name}"`, 'warn'); else beepOk(); $('[name=category]', pm.mb).focus(); });
+  bi.addEventListener('change', () => { bi.value = scanNorm(bi.value); });
 }
 /* كارت الصنف: كل حركة (بيع / شراء / مرتجع / جرد) برقم المستند والعميل أو المورد والرصيد بعدها */
 const MOVE_T = { sale: ['بيع', 'pri'], return: ['مرتجع بيع', 'warn'], purchase: ['شراء', 'ok'], purchase_return: ['مرتجع شراء', 'bad'], adjust: ['جرد / تسوية', ''], opening: ['رصيد أول المدة', ''] };
@@ -1579,21 +1625,21 @@ function barcodeLabels(list) {
   const sel = new Map(); // id → عدد الملصقات
   const m = modal({ title: 'طباعة ملصقات باركود', wide: 'wide', body: `
     <div class="grid g3" style="margin-bottom:12px"><div><label class="f">مقاس الملصق</label><select class="in" id="bs">${opt('a4', 'ورقة A4 (3 × 8 ملصق)')}${opt('roll', 'طابعة ملصقات 38×25 مم')}${opt('roll50', 'طابعة ملصقات 50×30 مم')}</select></div>
-      <div><label class="f">يظهر على الملصق</label><label class="chk"><input type="checkbox" id="bp" checked> السعر</label><label class="chk"><input type="checkbox" id="bn" checked> اسم الصنف</label></div>
+      <div><label class="f">يظهر على الملصق</label><label class="chk"><input type="checkbox" id="bn" checked> اسم الصنف</label><div class="small faint">الملصق بيتطبع من غير سعر</div></div>
       <div class="small muted">الأصناف اللي معندهاش باركود بيتطبع لها الكود بتاعها كباركود — والكاشير يقدر يمسحه عادي.</div></div>
     <div class="toolbar"><input class="in" id="bq" placeholder="بحث" style="width:220px"><span class="sp"></span><button class="btn sm" id="ball">تحديد الكل</button><button class="btn sm" id="bnone">شيل الكل</button><b id="bcnt" class="small"></b></div>
-    <div class="tbl-wrap" style="max-height:46vh"><table class="t"><thead><tr><th></th><th>الصنف</th><th>الباركود / الكود</th><th class="n">السعر</th><th class="n">عدد الملصقات</th></tr></thead><tbody id="btb"></tbody></table></div>`,
+    <div class="tbl-wrap" style="max-height:46vh"><table class="t"><thead><tr><th></th><th>الصنف</th><th>الباركود / الكود</th><th class="n">عدد الملصقات</th></tr></thead><tbody id="btb"></tbody></table></div>`,
     buttons: [{ t: `${icon('print')} طباعة`, cls: 'pri', fn: async (mb) => {
       if (!sel.size) throw new Error('اختار صنف واحد على الأقل');
       await loadJsBarcode();
-      const size = $('#bs', mb).value, showP = $('#bp', mb).checked, showN = $('#bn', mb).checked;
+      const size = $('#bs', mb).value, showN = $('#bn', mb).checked;
       const labels = [];
       for (const [id, n] of sel) {
         const p = list.find((x) => x.id === id); if (!p) continue;
         const code = String(p.barcode || p.code || p.id);
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        try { JsBarcode(svg, code, { format: 'CODE128', height: size === 'roll' ? 32 : 40, width: size === 'roll' ? 1.3 : 1.6, fontSize: 11, margin: 0, displayValue: true }); } catch { continue; }
-        const html = `<div class="lb">${showN ? `<div class="nm">${esc(p.name)}</div>` : ''}${svg.outerHTML}${showP ? `<div class="pr">${money(p.price)} ج.م</div>` : ''}</div>`;
+        try { JsBarcode(svg, code, { format: 'CODE128', height: size === 'roll' ? 36 : 46, width: size === 'roll' ? 1.3 : 1.6, fontSize: 11, margin: 0, displayValue: true }); } catch { continue; }
+        const html = `<div class="lb">${showN ? `<div class="nm">${esc(p.name)}</div>` : ''}${svg.outerHTML}</div>`;
         for (let i = 0; i < n; i++) labels.push(html);
       }
       const css = size === 'a4'
@@ -1605,7 +1651,7 @@ function barcodeLabels(list) {
   const mb = m.mb;
   const render = () => {
     const q = $('#bq', mb).value.trim().toLowerCase();
-    $('#btb', mb).innerHTML = list.filter((p) => !q || prodMatch(p, q)).slice(0, 400).map((p) => `<tr data-id="${p.id}"><td><input type="checkbox" data-k="on" ${sel.has(p.id) ? 'checked' : ''}></td><td>${esc(p.name)}</td><td class="num small">${esc(p.barcode || p.code)}</td><td class="n">${M(p.price)}</td><td class="n"><input class="in sm" type="number" min="1" step="1" data-k="n" value="${sel.get(p.id) || 1}" style="width:70px"></td></tr>`).join('');
+    $('#btb', mb).innerHTML = list.filter((p) => !q || prodMatch(p, q)).slice(0, 400).map((p) => `<tr data-id="${p.id}"><td><input type="checkbox" data-k="on" ${sel.has(p.id) ? 'checked' : ''}></td><td>${esc(p.name)}</td><td class="num small">${esc(p.barcode || p.code)}</td><td class="n"><input class="in sm" type="number" min="1" step="1" data-k="n" value="${sel.get(p.id) || 1}" style="width:70px"></td></tr>`).join('');
     $('#bcnt', mb).textContent = `${sel.size} صنف · ${[...sel.values()].reduce((a, b) => a + b, 0)} ملصق`;
   };
   $('#btb', mb).addEventListener('change', (e) => {
