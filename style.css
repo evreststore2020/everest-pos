@@ -311,6 +311,27 @@ tr.fresh td{animation:flash 2.5s ease-out}
 :root[data-theme=dark] .umenu .dd{background:var(--card);color:var(--ink)}
 :root[data-theme=dark] ::-webkit-scrollbar-thumb{background:#2a3958}
 
+/* لوحة التنبيهات */
+.alerts{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:10px;padding:14px}
+.alert-tile{display:flex;gap:10px;align-items:flex-start;text-align:right;border:1px solid var(--line);background:var(--card);border-radius:14px;padding:12px;cursor:pointer;color:var(--ink);font:inherit;transition:.12s;min-width:0}
+.alert-tile:hover{border-color:var(--tone);box-shadow:var(--sh)}
+.alert-tile .ai{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;flex:none;background:var(--line2);color:var(--ink3)}
+.alert-tile .ai svg{width:19px;height:19px}
+.alert-tile .at{display:flex;flex-direction:column;min-width:0;gap:1px}
+.alert-tile .at b{font-size:22px;line-height:1.1;color:var(--ink3)}
+.alert-tile .at span{font-weight:700;font-size:13px}
+.alert-tile .at small{color:var(--ink3);font-size:11.5px;line-height:1.4}
+.alert-tile.hot{border-color:color-mix(in srgb,var(--tone) 35%,var(--line));background:color-mix(in srgb,var(--tone) 5%,var(--card))}
+.alert-tile.hot .ai{background:color-mix(in srgb,var(--tone) 14%,var(--card));color:var(--tone)}
+.alert-tile.hot .at b{color:var(--tone)}
+/* كارت الصنف: ملخص الفترة */
+.kcard{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:12px}
+.kcard div{background:var(--line2);border-radius:12px;padding:9px 12px}
+.kcard small{display:block;color:var(--ink3);font-weight:700;font-size:11.5px}
+.kcard b{font-size:17px}
+/* شريط "من عرض سعر" فوق الفاتورة */
+.qbar{display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--pri-soft);border-bottom:1px solid var(--line);font-size:13px;font-weight:700;color:var(--pri)}
+
 @media (max-width:1180px){.pos{grid-template-columns:1fr 370px}.g4{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:980px){.ctop{flex-wrap:wrap}.ctabs{order:3;flex-basis:100%;justify-content:flex-start}.cshell .pos{height:auto}}
 @media (max-width:860px){

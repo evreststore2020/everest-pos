@@ -226,6 +226,9 @@ const IC = {
   tag: '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
   alert: '<path d="M12 3 2 21h20z"/><path d="M12 10v5M12 18h.01"/>',
   scan: '<path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 12h10"/>',
+  quote: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
+  cheque: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 14h6M15 14h3M6 10h12"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
 };
 const icon = (n) => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${IC[n] || ''}</svg>`;
 
@@ -640,6 +643,7 @@ const NAV = [
   { grp: 'المبيعات' },
   { id: 'pos', t: 'نقطة البيع', ct: 'البيع', i: 'cart', c: 1 },
   { id: 'sales', t: 'الفواتير والمرتجعات', ct: 'فواتيري', i: 'receipt', c: 1 },
+  { id: 'quotes', t: 'عروض الأسعار', ct: 'عروض سعر', i: 'quote', c: 1 },
   { id: 'shifts', t: 'الورديات وتقفيل اليوم', ct: 'ورديتي', i: 'clock', c: 1 },
   { id: 'customers', t: 'العملاء', ct: 'العملاء', i: 'users', perm: 'customers', c: 1 },
   { grp: 'المخزون والمشتريات' },
@@ -652,6 +656,7 @@ const NAV = [
   { id: 'expenses', t: 'المصروفات', ct: 'مصروفات الدرج', i: 'cash', perm: 'expenses', c: 1 },
   { id: 'loans', t: 'السلف والاقتراض', ct: 'سلف واقتراض', i: 'coins', perm: 'loans', c: 1 },
   { id: 'treasury', t: 'الخزينة والبنك', i: 'safe', perm: 'treasury' },
+  { id: 'cheques', t: 'الشيكات', i: 'cheque', perm: 'treasury' },
   { grp: 'الإدارة', admin: true },
   { id: 'users', t: 'المستخدمين والصلاحيات', i: 'shield', admin: true },
   { id: 'settings', t: 'الإعدادات والنسخ الاحتياطي', i: 'gear', admin: true },
@@ -811,6 +816,34 @@ async function downloadBackup(snapId) {
   saveJSON(d, `pos-backup-${(d.date || ymd(new Date())).slice(0, 10)}${snapId ? '-' + snapId : ''}.json`);
   S.settings.last_backup = new Date().toISOString(); toast('تم تنزيل النسخة', 'ok');
 }
+/* ---------- لوحة التنبيهات: مربعات بالعدد، الأحمر محتاج تتصرف، وكل مربع بيفتح التفاصيل ---------- */
+async function alertsBlock(box) {
+  if (!box) return;
+  let a; try { a = await GET('/api/reports/alerts', bq()); } catch (e) { box.innerHTML = ''; return; }
+  const sc = can('see_cost');
+  const tiles = [
+    { k: 'low', ic: 'box', t: 'وصلت لحد الطلب', n: a.low.count, s: 'أصناف محتاجة تتطلب', tone: '#d97706' },
+    { k: 'negative', ic: 'alert', t: 'رصيد بالسالب', n: a.negative.count, s: a.negative.count ? 'اتباع أكتر من الموجود — راجع الجرد' : 'مفيش أخطاء في الأرصدة', tone: '#dc2626' },
+    { k: 'credit', ic: 'users', t: 'عدّوا حد الائتمان', n: a.credit.count, s: a.credit.count ? `زيادة ${money(a.credit.over)} عن الحد` : 'كل العملاء في حدودهم', tone: '#dc2626' },
+    { k: 'stagnant', ic: 'layers', t: `أصناف راكدة (${a.stagnant_days} يوم)`, n: a.stagnant.count, s: a.stagnant.count ? `محبوس فيها ${money(a.stagnant.value)}${sc ? ' بالتكلفة' : ''}` : 'كل الأصناف بتتحرك', tone: '#7c3aed' },
+    ...(a.cheques.enabled ? [{ k: 'cheques', ic: 'cheque', t: 'شيكات مستحقة (أسبوع)', n: a.cheques.count, s: a.cheques.count ? `${a.cheques.overdue ? `${a.cheques.overdue} متأخر · ` : ''}لينا ${money(a.cheques.in)} · علينا ${money(a.cheques.out)}` : 'مفيش شيكات مستحقة', tone: '#0e7490' }] : []),
+    { k: 'quotes', ic: 'quote', t: 'عروض أسعار مفتوحة', n: a.quotes.count, s: a.quotes.count ? `بقيمة ${money(a.quotes.value)}${a.quotes.expired ? ` · ${a.quotes.expired} انتهت` : ''}` : 'مفيش عروض مستنية رد', tone: '#2563eb' },
+  ];
+  box.innerHTML = `<div class="card"><div class="hd">${icon('bell')} تنبيهات محتاجة متابعة<span class="sp"></span><span class="small faint">دوس على أي مربع عشان تشوف التفاصيل</span></div>
+    <div class="alerts">${tiles.map((x) => `<button class="alert-tile ${x.n ? 'hot' : ''}" data-k="${x.k}" style="--tone:${x.tone}"><span class="ai">${icon(x.ic)}</span><span class="at"><b class="num">${x.n}</b><span>${x.t}</span><small>${x.s}</small></span></button>`).join('')}</div></div>`;
+  const br = (r) => (showBranchCol() ? [{ t: 'المعرض', f: (x) => brName(x.branch_id) }] : []);
+  const list = (title, cols, rows, extra = '') => { const m = modal({ title, wide: 'wide', body: `${extra}<div id="al"></div>`, buttons: [{ t: 'إغلاق' }] }); mountTable($('#al', m.mb), cols, rows, { maxh: '60vh', empty: 'لا يوجد' }); return m; };
+  box.querySelector('.alerts').onclick = (e) => {
+    const b = e.target.closest('[data-k]'); if (!b) return;
+    const k = b.dataset.k;
+    if (k === 'stagnant') { S.repSt = { ...(S.repSt || newRange('month')), tab: 'stagnant' }; location.hash = '#/reports'; return; }
+    if (k === 'cheques') { location.hash = '#/cheques'; return; }
+    if (k === 'quotes') { S.quoteSt = { ...(S.quoteSt || newRange('month')), status: 'open' }; location.hash = '#/quotes'; return; }
+    if (k === 'low') { const m = list(`أصناف وصلت لحد الطلب (${a.low.count})`, [{ t: 'الكود', k: 'code' }, ...br(), { t: 'الصنف', k: 'name' }, { t: 'الرصيد', n: 1, f: (r) => `<b class="num ${r.stock <= 0 ? 'bad' : 'warn'}">${qf(r.stock)}</b>` }, { t: 'حد الطلب', n: 1, f: (r) => Q(r.min_stock) }], a.low.rows, '<p class="small muted" style="margin-top:0">دوس على أي صنف تشوف كارت الصنف (آخر بيع وآخر شراء).</p>'); $('#al', m.mb).addEventListener('click', (ev) => { const tr = ev.target.closest('tr[data-i]'); if (tr) productCard(a.low.rows[+tr.dataset.i].id); }); }
+    if (k === 'negative') { const m = list(`أصناف رصيدها بالسالب (${a.negative.count})`, [{ t: 'الكود', k: 'code' }, ...br(), { t: 'الصنف', k: 'name' }, { t: 'الرصيد', n: 1, f: (r) => `<b class="num bad">${qf(r.stock)}</b>` }], a.negative.rows, '<p class="small muted" style="margin-top:0">ده معناه إن الصنف اتباع أكتر من الكمية المسجلة (غالباً فاتورة اتعملت من غير نت، أو مشتريات متسجلتش). دوس على الصنف تشوف حركته، وصلّح الرصيد من شاشة الجرد.</p>'); $('#al', m.mb).addEventListener('click', (ev) => { const tr = ev.target.closest('tr[data-i]'); if (tr) productCard(a.negative.rows[+tr.dataset.i].id); }); }
+    if (k === 'credit') { const m = list(`عملاء عدّوا حد الائتمان (${a.credit.count})`, [{ t: 'العميل', k: 'name' }, ...br(), { t: 'الموبايل', k: 'phone' }, { t: 'حد الائتمان', n: 1, f: (r) => M(r.credit_limit) }, { t: 'الرصيد', n: 1, f: (r) => M(r.balance, 'bad') }, { t: 'الزيادة', n: 1, f: (r) => M(r.balance - r.credit_limit, 'bad') }], a.credit.rows); $('#al', m.mb).addEventListener('click', (ev) => { const tr = ev.target.closest('tr[data-i]'); if (tr) statement('customer', a.credit.rows[+tr.dataset.i]); }); }
+  };
+}
 VIEWS.dashboard = async (el) => {
   const d = await GET('/api/dashboard', bq());
   if (!d.can_full) {
@@ -827,6 +860,7 @@ VIEWS.dashboard = async (el) => {
   el.innerHTML = `
     <div class="hero"><div class="sp"><h1>${greet()}، ${esc(S.user.name)} 👋</h1><p>${arDate()} · ملخص ${esc(where)} — ${t.count} فاتورة النهارده بصافي ${money(t.net)} ج.م</p></div>
       <div class="qa">${isAdmin() ? `<a class="btn" href="#/live">${icon('pulse')}الحركة المباشرة</a>` : ''}${can('purchases') ? `<a class="btn" href="#/purchases">${icon('truck')}فاتورة شراء</a>` : ''}${can('expenses') ? `<a class="btn" href="#/expenses">${icon('cash')}مصروف</a>` : ''}<a class="btn" href="#/reports">${icon('chart')}التقارير</a><button class="btn" id="waDay">💬 ملخص اليوم واتساب</button></div></div>
+    <div id="alerts" style="margin-bottom:16px"></div>
     <div class="grid g4" style="margin-bottom:16px">
       ${stat('صافي مبيعات اليوم', M(t.net), `${t.count} فاتورة · مرتجع ${money(t.returns)}`, '', 'cart', '#2563eb')}
       ${sc ? stat('مجمل ربح اليوم', M(t.gross_profit), `مصروفات اليوم ${money(d.today_expenses)}`, t.gross_profit >= 0 ? 'ok' : 'bad', 'trend', '#059669') : stat('مصروفات اليوم', M(d.today_expenses), '', '', 'cash', '#d97706')}
@@ -851,6 +885,7 @@ VIEWS.dashboard = async (el) => {
     </div>
     <div style="margin-top:18px">${dashBanner()}</div>`;
   backupNag(el);
+  alertsBlock($('#alerts', el));
   const max = Math.max(1, ...d.chart.map((x) => x.v));
   $('#ch', el).innerHTML = `<div class="bars">${d.chart.map((x) => `<div class="b" title="${x.d}: ${money(x.v)}"><span class="num" style="font-size:10px">${x.v ? Math.round(x.v).toLocaleString('en-US') : ''}</span><i style="height:${Math.max(1, (x.v / max) * 120)}px"></i><span>${x.d.slice(8)}/${x.d.slice(5, 7)}</span></div>`).join('')}</div>`;
   if (S.branch) mountTable($('#bb', el), [{ t: 'الصنف', k: 'name' }, { t: 'الكمية', n: 1, f: (r) => Q(r.qty) }, { t: 'القيمة', n: 1, f: (r) => M(r.v) }], d.top, { empty: 'لا توجد مبيعات بعد' });
@@ -1025,7 +1060,8 @@ VIEWS.pos = async (el) => {
         <div class="pgrid" id="pg"></div>
       </div>
       <div class="card cart">
-        <div class="hd" style="flex-wrap:wrap">${icon('receipt')} فاتورة جديدة <span class="sp"></span><button class="btn sm" id="holdBtn" title="تعليق الفاتورة والبيع لعميل تاني">⏸ تعليق</button><button class="btn sm" id="heldBtn"></button><button class="btn sm bad" id="clr">مسح</button></div>
+        <div class="hd" style="flex-wrap:wrap">${icon('receipt')} فاتورة جديدة <span class="sp"></span><button class="btn sm" id="quoteBtn" title="احفظ الأصناف دي كعرض سعر واطبعه للعميل — من غير ما يأثر على المخزون">${icon('quote')}${st.quoteId ? 'تحديث العرض' : 'عرض سعر'}</button><button class="btn sm" id="holdBtn" title="تعليق الفاتورة والبيع لعميل تاني">⏸ تعليق</button><button class="btn sm" id="heldBtn"></button><button class="btn sm bad" id="clr">مسح</button></div>
+        ${st.quoteId ? `<div class="qbar">${icon('quote')}<span>من عرض السعر <span class="num">${esc(st.quoteDoc)}</span> — الدفع هيحوّله لفاتورة</span><span class="sp"></span><button class="btn ghost sm" id="qDetach" title="فك الربط بعرض السعر">✕</button></div>` : ''}
         <div style="padding:10px 14px;border-bottom:1px solid var(--line)">
           <div class="row" style="flex-wrap:nowrap"><div style="flex:1;position:relative"><input class="in" id="cust" placeholder="العميل: نقدي (اكتب للبحث بالاسم أو الموبايل)" autocomplete="off"></div><button class="btn" id="newCust" title="عميل جديد">${icon('plus')}</button></div>
           <div id="custInfo" class="small muted" style="margin-top:4px"></div>
@@ -1099,9 +1135,9 @@ VIEWS.pos = async (el) => {
   const renderHeldBtn = () => { const n = held().length; $('#heldBtn', el).innerHTML = `${icon('clock')}المعلقة${n ? ` <b class="nbadge" style="margin:0">${n}</b>` : ''}`; };
   const holdCurrent = () => {
     if (!st.cart.length) return toast('الفاتورة فاضية', 'bad');
-    const list = held(); list.push({ id: Date.now(), at: new Date().toLocaleTimeString('en-GB').slice(0, 5), customer: st.customer, cart: st.cart, disc: st.disc, discMode: st.discMode, notes: st.notes, total: r2(subtotal() - discAmt()) });
+    const list = held(); list.push({ id: Date.now(), at: new Date().toLocaleTimeString('en-GB').slice(0, 5), customer: st.customer, cart: st.cart, disc: st.disc, discMode: st.discMode, notes: st.notes, quoteId: st.quoteId, quoteDoc: st.quoteDoc, total: r2(subtotal() - discAmt()) });
     LS.set(heldKey, list);
-    st.cart = []; st.customer = null; st.disc = 0; st.notes = '';
+    st.cart = []; st.customer = null; st.disc = 0; st.notes = ''; st.quoteId = null; st.quoteDoc = '';
     toast('اتعلقت الفاتورة — تقدر ترجعلها من "المعلقة"', 'ok'); route();
   };
   const showHeld = () => {
@@ -1110,8 +1146,8 @@ VIEWS.pos = async (el) => {
     $$('[data-r]', m.mb).forEach((b) => (b.onclick = async () => {
       if (st.cart.length && !(await confirmBox('الفاتورة الحالية فيها أصناف — هتتعلّق هي كمان وتسترجع المختارة. موافق؟'))) return;
       const all = held(); const h = all.find((x) => x.id === +b.dataset.r); let rest = all.filter((x) => x.id !== h.id);
-      if (st.cart.length) rest.push({ id: Date.now(), at: new Date().toLocaleTimeString('en-GB').slice(0, 5), customer: st.customer, cart: st.cart, disc: st.disc, discMode: st.discMode, notes: st.notes, total: r2(subtotal() - discAmt()) });
-      LS.set(heldKey, rest); Object.assign(st, { cart: h.cart, customer: h.customer, disc: h.disc, discMode: h.discMode, notes: h.notes }); m.close(); route();
+      if (st.cart.length) rest.push({ id: Date.now(), at: new Date().toLocaleTimeString('en-GB').slice(0, 5), customer: st.customer, cart: st.cart, disc: st.disc, discMode: st.discMode, notes: st.notes, quoteId: st.quoteId, quoteDoc: st.quoteDoc, total: r2(subtotal() - discAmt()) });
+      LS.set(heldKey, rest); Object.assign(st, { cart: h.cart, customer: h.customer, disc: h.disc, discMode: h.discMode, notes: h.notes, quoteId: h.quoteId || null, quoteDoc: h.quoteDoc || '' }); m.close(); route();
     }));
     $$('[data-d]', m.mb).forEach((b) => (b.onclick = async () => { if (!(await confirmBox('حذف الفاتورة المعلقة؟', 'حذف', 'bad'))) return; LS.set(heldKey, held().filter((x) => x.id !== +b.dataset.d)); m.close(); renderHeldBtn(); showHeld(); }));
   };
@@ -1146,7 +1182,28 @@ VIEWS.pos = async (el) => {
   $('#discMode', el).onchange = (e) => { st.discMode = e.target.value; renderCart(); };
   $('#notes', el).oninput = (e) => (st.notes = e.target.value);
   const posAtt = attachUI($('#notes', el));
-  $('#clr', el).onclick = async () => { if (st.cart.length && !(await confirmBox('مسح كل الأصناف من الفاتورة؟', 'مسح', 'bad'))) return; st.cart = []; st.customer = null; st.disc = 0; st.notes = ''; route(); };
+  $('#clr', el).onclick = async () => { if (st.cart.length && !(await confirmBox('مسح كل الأصناف من الفاتورة؟', 'مسح', 'bad'))) return; st.cart = []; st.customer = null; st.disc = 0; st.notes = ''; st.quoteId = null; st.quoteDoc = ''; route(); };
+  if ($('#qDetach', el)) $('#qDetach', el).onclick = () => { st.quoteId = null; st.quoteDoc = ''; route(); };
+  // ===== حفظ الأصناف كعرض سعر (أو تحديث العرض اللي اتفتح) =====
+  $('#quoteBtn', el).onclick = () => {
+    if (!st.cart.length) return toast('ضيف الأصناف الأول وبعدين دوس "عرض سعر"', 'bad');
+    const total = r2(subtotal() - discAmt()); const c = st.customer;
+    const def = new Date(); def.setDate(def.getDate() + 7);
+    modal({ title: st.quoteId ? `تحديث عرض السعر ${st.quoteDoc}` : 'حفظ عرض سعر', body: `<div style="text-align:center;margin-bottom:12px"><div class="muted">إجمالي العرض</div><div class="num" style="font-size:28px;font-weight:800">${money(total)}</div><div class="small faint">${st.cart.length} صنف — عرض السعر مش بيخصم من المخزون</div></div>
+      <div class="grid g2">${c ? `<div class="field" style="grid-column:1/-1"><label class="f">العميل</label><b>${esc(c.name)}</b> <span class="faint small num">${esc(c.phone || '')}</span></div>` : `<div class="field"><label class="f">اسم العميل / المقاول</label><input class="in" name="customer_name" value="${esc(st.qName || '')}" placeholder="مثال: م. أحمد — شقة التجمع"></div><div class="field"><label class="f">الموبايل (للواتساب)</label><input class="in" name="customer_phone" dir="ltr" value="${esc(st.qPhone || '')}"></div>`}
+      <div class="field"><label class="f">العرض ساري لحد</label><input class="in" type="date" name="valid_until" value="${esc(st.qValid || ymd(def))}"></div>
+      <div class="field"><label class="f">ملاحظات تظهر في العرض</label><input class="in" name="notes" value="${esc(st.notes)}" placeholder="مثال: الأسعار شاملة التوصيل"></div></div>`,
+      buttons: [{ t: `${icon('print')} حفظ وطباعة`, cls: 'pri', fn: (mb) => saveQuote(mb, true) }, { t: 'حفظ فقط', fn: (mb) => saveQuote(mb, false) }, { t: 'رجوع' }] });
+  };
+  const saveQuote = async (mb, print) => {
+    const v = fv(mb);
+    const body = { branch_id: curBranch(), customer_id: st.customer ? st.customer.id : null, customer_name: v.customer_name || '', customer_phone: v.customer_phone || '', valid_until: v.valid_until, notes: v.notes, discount: discAmt(), items: st.cart.map((x) => ({ product_id: x.product_id, qty: x.qty, price: x.price })) };
+    const q = st.quoteId ? await PUT('/api/quotes/' + st.quoteId, body) : await POST('/api/quotes', body);
+    Object.assign(st, { cart: [], customer: null, disc: 0, notes: '', quoteId: null, quoteDoc: '', qName: '', qPhone: '', qValid: '' });
+    toast(`اتحفظ عرض السعر ${q.doc_no} ✓`, 'ok');
+    if (print) printQuote(q);
+    route(); setTimeout(() => quoteModal(q.id), 60);
+  };
   picker($('#cust', el), { items: () => S.cache['c' + curBranch()] || custs, match: (c, q) => c.name.toLowerCase().includes(q) || (c.phone || '').includes(q), label: (c) => esc(c.name), sub: (c) => `${esc(c.phone || '')} ${c.balance ? '· ' + money(c.balance) : ''}`, onPick: (c) => { st.customer = c.name === 'عميل نقدي' ? null : c; renderCust(); applyTier(); ps.focus(); } });
   $('#cust', el).addEventListener('blur', () => setTimeout(renderCust, 200));
   $('#newCust', el).onclick = () => customerForm(null, (c) => { st.customer = c; renderCust(); applyTier(); });
@@ -1156,13 +1213,16 @@ VIEWS.pos = async (el) => {
     if (!st.cart.length) return toast('الفاتورة فاضية', 'bad');
     const total = r2(subtotal() - discAmt());
     payModal(total, st, async (pays, print) => {
-      const body = { branch_id: curBranch(), customer_id: st.customer ? st.customer.id : null, items: st.cart.map((x) => ({ product_id: x.product_id, qty: x.qty, price: x.price })), discount: discAmt(), pays, notes: st.notes };
+      const body = { branch_id: curBranch(), customer_id: st.customer ? st.customer.id : null, items: st.cart.map((x) => ({ product_id: x.product_id, qty: x.qty, price: x.price })), discount: discAmt(), pays, notes: [st.notes, st.quoteDoc ? `(من عرض السعر ${st.quoteDoc})` : ''].filter(Boolean).join(' ') };
       let s;
       try { s = await POST('/api/sales', body); }
       catch (e) { if (!e.offline) throw e; s = queueOfflineSale(body, st.customer); } // مفيش نت: تتحفظ على الجهاز وتترفع بعدين
       if (s.offline) { if (posAtt.count()) toast('الصور المرفقة مش هتترفع من غير نت — ارفعها من الفاتورة بعد ما النت يرجع', 'warn'); }
-      else await posAtt.upload('sale', s.id);
-      st.cart = []; st.customer = null; st.disc = 0; st.notes = '';
+      else {
+        await posAtt.upload('sale', s.id);
+        if (st.quoteId) await POST(`/api/quotes/${st.quoteId}/converted`, { sale_id: s.id }).catch((e) => toast('الفاتورة اتحفظت، بس عرض السعر ماتقفلش: ' + e.message, 'warn'));
+      }
+      st.cart = []; st.customer = null; st.disc = 0; st.notes = ''; st.quoteId = null; st.quoteDoc = '';
       S.cache['c' + curBranch()] = null;
       if (print) printSale(s);
       route();
@@ -1457,11 +1517,43 @@ function productForm(p, onSave, list) {
     ],
   });
 }
+/* كارت الصنف: كل حركة (بيع / شراء / مرتجع / جرد) برقم المستند والعميل أو المورد والرصيد بعدها */
+const MOVE_T = { sale: ['بيع', 'pri'], return: ['مرتجع بيع', 'warn'], purchase: ['شراء', 'ok'], purchase_return: ['مرتجع شراء', 'bad'], adjust: ['جرد / تسوية', ''], opening: ['رصيد أول المدة', ''] };
 async function productCard(id) {
-  const d = await GET(`/api/products/${id}/moves`);
-  const T = { sale: 'بيع', return: 'مرتجع بيع', purchase: 'شراء', purchase_return: 'مرتجع شراء', adjust: 'جرد / تسوية', opening: 'رصيد أول المدة' };
-  const m = modal({ title: `كارت الصنف: ${d.product.name}`, wide: 'wide', body: `<div class="row" style="margin-bottom:10px"><span>الرصيد الحالي: <b class="num">${qf(d.product.stock)}</b></span><span class="faint">·</span><span>سعر البيع: ${M(d.product.price)}</span>${d.product.cost != null ? `<span class="faint">·</span><span>متوسط التكلفة: ${M(d.product.cost)}</span>` : ''}</div><div id="mv"></div>`, buttons: [{ t: 'إغلاق' }] });
-  mountTable($('#mv', m.mb), [{ t: 'التاريخ', f: (r) => dt(r.date) }, { t: 'الحركة', f: (r) => T[r.type] || r.type }, { t: 'وارد', n: 1, f: (r) => (r.qty > 0 ? `<span class="ok num">${qf(r.qty)}</span>` : '') }, { t: 'منصرف', n: 1, f: (r) => (r.qty < 0 ? `<span class="bad num">${qf(-r.qty)}</span>` : '') }, { t: 'الرصيد', n: 1, f: (r) => `<b class="num">${qf(r.balance)}</b>` }, { t: 'المستخدم', k: 'user_name' }, { t: 'ملاحظات', k: 'notes' }], d.moves.slice().reverse(), { maxh: '60vh', empty: 'لا توجد حركات على الصنف' });
+  const st = { ...newRange('all') };
+  let d;
+  const m = modal({ title: 'كارت الصنف', wide: 'xwide', body: `<div class="toolbar" style="margin-bottom:10px">${rangeHTML(st)}<span class="sp"></span><button class="btn" id="kcsv">${icon('download')}Excel</button><button class="btn" id="kprn">${icon('print')}طباعة</button></div><div id="kh"></div><div id="mv"><div class="empty">جاري التحميل…</div></div>`, buttons: [{ t: 'إغلاق' }] });
+  const sc = can('see_cost');
+  const cols = [
+    { t: 'التاريخ', f: (r) => dt(r.date), v: (r) => r.date },
+    { t: 'الحركة', f: (r) => { const [n, c] = MOVE_T[r.type] || [r.type, '']; return `<span class="badge ${c}">${n}</span>`; }, v: (r) => (MOVE_T[r.type] || [r.type])[0] },
+    { t: 'المستند', f: (r) => (r.doc_no ? `<b class="num">${esc(r.doc_no)}</b>` : ''), v: (r) => r.doc_no || '' },
+    { t: 'العميل / المورد', f: (r) => esc(r.party || r.notes || ''), v: (r) => r.party || r.notes || '' },
+    { t: 'وارد', n: 1, f: (r) => (r.qty > 0 ? `<span class="ok num">${qf(r.qty)}</span>` : ''), v: (r) => (r.qty > 0 ? r.qty : '') },
+    { t: 'منصرف', n: 1, f: (r) => (r.qty < 0 ? `<span class="bad num">${qf(-r.qty)}</span>` : ''), v: (r) => (r.qty < 0 ? -r.qty : '') },
+    { t: 'الرصيد بعدها', n: 1, f: (r) => `<b class="num ${r.balance < 0 ? 'bad' : ''}">${qf(r.balance)}</b>`, v: (r) => r.balance },
+    { t: 'سعر البيع', n: 1, f: (r) => (r.price != null ? M(r.price) : ''), v: (r) => r.price ?? '' },
+    ...(sc ? [{ t: 'التكلفة', n: 1, f: (r) => (r.cost ? M(r.cost) : ''), v: (r) => r.cost || '' }] : []),
+    { t: 'المستخدم', k: 'user_name' },
+  ];
+  const head = () => {
+    const p = d.product; const bt = d.by_type || {};
+    const sold = -(bt.sale || 0) - (bt.return || 0);
+    return `<div class="row" style="margin-bottom:10px;gap:10px"><b style="font-size:17px">${esc(p.name)}</b><span class="badge">كود ${esc(p.code)}</span>${p.category ? `<span class="badge">${esc(p.category)}</span>` : ''}${showBranchCol() || isAdmin() ? brName(p.branch_id) : ''}<span class="sp"></span>
+      <span>الرصيد الحالي: <b class="num ${p.stock < 0 ? 'bad' : ''}">${qf(p.stock)}</b> ${esc(p.unit || '')}</span><span class="faint">·</span><span>سعر البيع ${M(p.price)}</span>${p.cost != null ? `<span class="faint">·</span><span>التكلفة ${M(p.cost)}</span>` : ''}</div>
+      <div class="kcard"><div><small>رصيد أول الفترة</small><b class="num">${qf(d.opening)}</b></div><div><small>وارد</small><b class="num ok">${qf(d.in)}</b></div><div><small>منصرف</small><b class="num bad">${qf(d.out)}</b></div><div><small>رصيد آخر الفترة</small><b class="num">${qf(d.closing)}</b></div>
+        <div><small>صافي المباع في الفترة</small><b class="num">${qf(sold)}</b></div><div><small>آخر بيع</small><b class="num" style="font-size:14px">${d.last_sale ? esc(d.last_sale.slice(0, 10)) + ` <span class="faint small">(من ${daysSince(d.last_sale)} يوم)</span>` : '<span class="warn">عمره ما اتباع</span>'}</b></div></div>`;
+  };
+  const load = async () => {
+    d = await GET(`/api/products/${id}/card`, { from: st.from, to: st.to });
+    $('.mh', m.el).firstChild.textContent = `كارت الصنف: ${d.product.name}`;
+    $('#kh', m.mb).innerHTML = head();
+    mountTable($('#mv', m.mb), cols, d.rows, { maxh: '52vh', empty: 'لا توجد حركات على الصنف في الفترة دي', click: (r) => (r.ref_type === 'sale' ? saleModal(r.ref_id) : r.ref_type === 'purchase' && can('purchases') ? purchaseModal(r.ref_id) : null) });
+  };
+  bindRange(m.mb, st, () => load().catch((e) => toast(e.message, 'bad')));
+  $('#kcsv', m.mb).onclick = () => exportCSV('كارت-صنف-' + (d ? d.product.name : ''), cols, d ? d.rows : []);
+  $('#kprn', m.mb).onclick = () => d && printReport(`كارت الصنف: ${d.product.name}`, `${rangeLabel(st)} — كود ${d.product.code}`, head().replace(/class="kcard"/, 'class="kcard" style="display:flex;gap:16px;margin:8px 0"') + tableHTML(cols, d.rows));
+  try { await load(); } catch (e) { m.close(); toast(e.message, 'bad'); }
 }
 function parseCSV(text) {
   const rows = []; let row = [], cur = '', q = false;
@@ -2156,34 +2248,251 @@ function printShift(s) {
 /* =====================================================================
    التقارير
    ===================================================================== */
+/* =====================================================================
+   عروض الأسعار: تتعمل من شاشة البيع (زرار "عرض سعر")، تتطبع وتتبعت واتساب، ولما العميل يوافق تتحول لفاتورة
+   ===================================================================== */
+const Q_ST = { open: ['مفتوح', 'pri'], converted: ['اتحوّل فاتورة', 'ok'], cancelled: ['ملغي', 'bad'] };
+const qStatus = (r) => (r.status === 'open' && r.expired ? '<span class="badge warn">انتهت صلاحيته</span>' : `<span class="badge ${(Q_ST[r.status] || ['', ''])[1]}">${(Q_ST[r.status] || [r.status])[0]}</span>`);
+VIEWS.quotes = async (el) => {
+  const st = S.quoteSt || (S.quoteSt = { ...newRange('month'), status: 'open', q: '' });
+  el.innerHTML = `<div class="toolbar"><div class="seg" id="qs">${[['open', 'المفتوحة'], ['converted', 'اتحولت فواتير'], ['cancelled', 'الملغية'], ['', 'الكل']].map(([k, t]) => `<button data-s="${k}" class="${st.status === k ? 'on' : ''}">${t}</button>`).join('')}</div>
+    <span id="qr" class="row" style="gap:6px">${rangeHTML(st)}</span><input class="in" id="qq" placeholder="رقم العرض أو اسم / موبايل العميل" value="${esc(st.q)}" style="width:220px"><span class="sp"></span><a class="btn pri" href="#/pos">${icon('plus')}عرض سعر جديد</a><button class="btn" id="csv">${icon('download')}Excel</button></div>
+    <p class="small muted" style="margin:0 0 12px">عرض السعر بيتعمل من شاشة البيع: ضيف الأصناف ودوس <b>"عرض سعر"</b> بدل الدفع. مش بيخصم من المخزون. لما العميل يوافق افتح العرض ودوس <b>"تحويل لفاتورة"</b>.</p>
+    <div class="grid g3" id="sum" style="margin-bottom:14px"></div><div id="tb"></div>`;
+  let rows = [];
+  const cols = [
+    { t: 'رقم العرض', f: (r) => `<b class="num">${esc(r.doc_no)}</b>`, v: (r) => r.doc_no },
+    ...(showBranchCol() ? [{ t: 'المعرض', f: (r) => brName(r.branch_id), v: (r) => branchOf(r.branch_id).name }] : []),
+    { t: 'التاريخ', f: (r) => dt(r.date), v: (r) => r.date }, { t: 'العميل', k: 'customer' }, { t: 'الموبايل', f: (r) => `<span class="num">${esc(r.phone || '')}</span>`, v: (r) => r.phone },
+    { t: 'أصناف', n: 1, k: 'items_count' }, { t: 'الإجمالي', n: 1, f: (r) => `<b>${M(r.total)}</b>`, v: (r) => r.total },
+    { t: 'ساري لحد', f: (r) => `<span class="num ${r.expired ? 'bad' : ''}">${esc(r.valid_until || '')}</span>`, v: (r) => r.valid_until },
+    { t: 'الحالة', f: (r) => qStatus(r) + (r.sale_doc ? ` <span class="num small">${esc(r.sale_doc)}</span>` : ''), v: (r) => (Q_ST[r.status] || [r.status])[0] + (r.sale_doc ? ' ' + r.sale_doc : '') },
+    { t: 'عمله', k: 'user_name' },
+  ];
+  const load = async () => {
+    $('#qr', el).style.display = st.status === 'open' ? 'none' : '';
+    rows = await GET('/api/quotes', bq({ from: st.from, to: st.to, status: st.status, q: st.q }));
+    const open = rows.filter((r) => r.status === 'open'), conv = rows.filter((r) => r.status === 'converted');
+    $('#sum', el).innerHTML = stat(st.status === 'open' ? 'عروض مستنية رد' : 'عدد العروض', `<span class="num">${rows.length}</span>`, `بقيمة ${money(rows.reduce((s, r) => s + r.total, 0))}`, '', 'quote', '#2563eb')
+      + stat('انتهت صلاحيتها', `<span class="num ${open.some((r) => r.expired) ? 'warn' : ''}">${open.filter((r) => r.expired).length}</span>`, 'كلّم العميل أو جدّد العرض', '', 'clock', '#d97706')
+      + (st.status === 'open' ? '' : stat('نسبة التحويل لفواتير', `<span class="num">${rows.length ? Math.round((conv.length / rows.length) * 100) : 0}%</span>`, `${conv.length} عرض اتحوّل بقيمة ${money(conv.reduce((s, r) => s + r.total, 0))}`, 'ok', 'trend', '#059669'));
+    mountTable($('#tb', el), cols, rows, { click: (r) => quoteModal(r.id, load), rowCls: (r) => (r.status === 'cancelled' ? 'void' : ''), empty: st.status === 'open' ? 'مفيش عروض أسعار مفتوحة' : 'لا توجد عروض في الفترة دي' });
+  };
+  $$('#qs button', el).forEach((b) => (b.onclick = () => { st.status = b.dataset.s; $$('#qs button', el).forEach((x) => x.classList.toggle('on', x === b)); load(); }));
+  bindRange(el, st, load);
+  $('#qq', el).oninput = debounce((e) => { st.q = e.target.value.trim(); load(); }, 300);
+  $('#csv', el).onclick = () => exportCSV('عروض-الأسعار', cols, rows);
+  await load();
+};
+async function quoteModal(id, onChange) {
+  const q = await GET('/api/quotes/' + id);
+  const open = q.status === 'open';
+  const sub = r2(q.items.reduce((s, i) => s + i.total, 0));
+  const m = modal({ title: `عرض سعر ${q.doc_no}`, wide: 'wide', body: `<div class="row" style="margin-bottom:10px;gap:10px">${qStatus(q)}${q.sale_doc ? `<span class="small">اتحوّل للفاتورة <a href="#" id="qSale" class="num"><b>${esc(q.sale_doc)}</b></a></span>` : ''}<span class="sp"></span>${brName(q.branch_id)}</div>
+    <div class="grid g3" style="margin-bottom:12px;gap:8px"><div><span class="small muted">العميل</span><div><b>${esc(q.cust_name || '—')}</b> <span class="num small faint">${esc(q.cust_phone || '')}</span></div></div><div><span class="small muted">التاريخ</span><div class="num">${esc(q.date.slice(0, 16))}</div></div><div><span class="small muted">ساري لحد</span><div class="num ${q.expired ? 'bad' : ''}">${esc(q.valid_until || '')}${q.expired ? ' (انتهى)' : ''}</div></div></div>
+    <div id="qi"></div>
+    <div class="card" style="padding:10px 14px;margin-top:10px;background:#f8fafd;max-width:320px;margin-inline-start:auto"><div class="row between"><span>الإجمالي</span><b class="num">${money(sub)}</b></div>${q.discount ? `<div class="row between"><span>الخصم</span><b class="num">${money(q.discount)}</b></div>` : ''}<div class="row between" style="font-size:17px"><span>الصافي</span><b class="num">${money(q.total)}</b></div></div>
+    ${q.notes ? `<p class="small muted">ملاحظات: ${esc(q.notes)}</p>` : ''}<p class="small faint">عمله: ${esc(q.user_name || '')}</p>`,
+    buttons: [
+      ...(open ? [{ t: `${icon('cart')} تحويل لفاتورة / تعديل`, cls: 'ok pri', fn: async () => { await quoteToPos(q); } }] : []),
+      { t: `${icon('print')} طباعة`, fn: () => { printQuote(q); return false; } },
+      ...(q.cust_phone ? [{ t: '💬 واتساب', fn: () => { openWhatsApp(q.cust_phone, quoteText(q)); return false; } }] : []),
+      ...(open ? [{ t: 'إلغاء العرض', cls: 'bad', fn: async () => { const why = await promptBox('إلغاء عرض السعر', 'السبب (اختياري) — مثلاً: العميل اشترى من مكان تاني'); if (why === null) return false; await POST(`/api/quotes/${q.id}/cancel`, { reason: why }); toast('اتلغى العرض', 'ok'); onChange && onChange(); } }] : []),
+      { t: 'إغلاق' },
+    ] });
+  mountTable($('#qi', m.mb), [{ t: '#', f: (r) => q.items.indexOf(r) + 1 }, { t: 'الصنف', k: 'name' }, { t: 'الوحدة', k: 'unit' }, { t: 'الكمية', n: 1, f: (r) => Q(r.qty) }, { t: 'السعر', n: 1, f: (r) => M(r.price) }, { t: 'الإجمالي', n: 1, f: (r) => M(r.total) }], q.items);
+  const ls = $('#qSale', m.mb); if (ls) ls.onclick = (e) => { e.preventDefault(); saleModal(q.sale_id); };
+}
+// فتح العرض في شاشة البيع: الأصناف بنفس أسعار العرض (لو الكاشير مسموحله يغيّر السعر) والدفع بيحوّله لفاتورة
+async function quoteToPos(q) {
+  if (isAdmin() && S.branch !== q.branch_id) { S.branch = q.branch_id; LS.set('pos_branch', S.branch); dropCache(); $$('#brseg button').forEach((b) => b.classList.toggle('on', +b.dataset.b === S.branch)); }
+  const st = posState();
+  if (st.cart.length && !(await confirmBox('فيه أصناف في الفاتورة الحالية — هتتشال ويتحط مكانها أصناف العرض. موافق؟'))) return;
+  const [prods, custs] = await Promise.all([products(true), customers(true)]);
+  const c = q.customer_id ? custs.find((x) => x.id === q.customer_id) || null : null;
+  const wh = !!(c && c.tier === 'wholesale'); const changed = [], missing = [];
+  st.cart = [];
+  for (const it of q.items) {
+    const p = prods.find((x) => x.id === it.product_id); if (!p) { missing.push(it.name); continue; }
+    const base = wh && p.price2 > 0 ? p.price2 : p.price;
+    let price = it.price;
+    if (price !== base && !can('change_price')) { changed.push(`${p.name}: ${money(it.price)} ← ${money(base)}`); price = base; }
+    st.cart.push({ product_id: p.id, name: p.name, price, base, retail: p.price, price2: p.price2 || 0, qty: it.qty, stock: p.stock, unit: p.unit });
+  }
+  Object.assign(st, { customer: c, disc: q.discount || 0, discMode: 'amt', notes: q.notes || '', quoteId: q.id, quoteDoc: q.doc_no, qName: c ? '' : q.cust_name || '', qPhone: c ? '' : q.cust_phone || '', qValid: q.valid_until });
+  if (location.hash !== '#/pos') location.hash = '#/pos'; else route();
+  if (missing.length) toast(`أصناف مش موجودة دلوقتي واتشالت: ${missing.join('، ')}`, 'warn');
+  if (changed.length) toast(`الأسعار اتغيرت من وقت العرض — هيتباع بالسعر الحالي: ${changed.join(' · ')}`, 'warn');
+  if (q.expired) toast('تنبيه: العرض ده انتهت صلاحيته — راجع الأسعار مع العميل', 'warn');
+}
+function quoteText(q) {
+  const b = branchOf(q.branch_id);
+  return [`*عرض سعر ${q.doc_no}*`, `${b.name || ''}${S.settings.company_name ? ' — ' + S.settings.company_name : ''}`, q.cust_name ? `السادة / ${q.cust_name}` : '', '',
+    ...q.items.map((i) => `• ${i.name} × ${qf(i.qty)} = ${money(i.total)}`), '', q.discount ? `الخصم: ${money(q.discount)}` : '', `*الإجمالي: ${money(q.total)} ج.م*`,
+    `العرض ساري حتى ${q.valid_until}`, q.notes ? `ملاحظات: ${q.notes}` : '', b.phone ? `للتواصل: ${b.phone}` : ''].filter((x, i, a) => x !== '' || (a[i - 1] !== '' && i)).join('\n');
+}
+function printQuote(q) {
+  const b = branchOf(q.branch_id); const company = S.settings.company_name || '';
+  const sub = r2(q.items.reduce((s, i) => s + i.total, 0));
+  const meta = [['رقم العرض', q.doc_no], ['التاريخ', q.date.slice(0, 10)], ['ساري حتى', q.valid_until], q.cust_name ? ['السادة', q.cust_name] : null, q.cust_phone ? ['موبايل', q.cust_phone] : null].filter(Boolean);
+  printHTML(`<div class="head"><div><h1>${esc(b.name || '')}</h1>${company ? `<div class="sub">${esc(company)}</div>` : ''}<div class="sub">${esc(b.address || '')} ${b.phone ? ' — ت: ' + esc(b.phone) : ''}</div></div>
+    <div><h2>عرض سعر</h2><table class="meta">${meta.map(([k, v]) => `<tr><td>${k}:</td><td><b>${esc(v)}</b></td></tr>`).join('')}</table></div></div>
+    <table class="t"><thead><tr><th>#</th><th>الصنف</th><th>الوحدة</th><th class="n">الكمية</th><th class="n">السعر</th><th class="n">الإجمالي</th></tr></thead><tbody>
+    ${q.items.map((i, n) => `<tr><td>${n + 1}</td><td>${esc(i.name)}</td><td>${esc(i.unit || '')}</td><td class="n">${qf(i.qty)}</td><td class="n">${money(i.price)}</td><td class="n">${money(i.total)}</td></tr>`).join('')}</tbody></table>
+    <table class="tot"><tr><td>الإجمالي</td><td class="n">${money(sub)}</td></tr>${q.discount ? `<tr><td>الخصم</td><td class="n">${money(q.discount)}</td></tr>` : ''}<tr class="g"><td>الصافي</td><td class="n">${money(q.total)} ج.م</td></tr></table>
+    ${q.notes ? `<p><b>ملاحظات:</b> ${esc(q.notes)}</p>` : ''}
+    <div class="ft">هذا العرض ساري حتى ${esc(q.valid_until)} — الأسعار قابلة للتغيير بعد هذا التاريخ. عرض السعر لا يُعد فاتورة.</div>`, false);
+}
+
+/* =====================================================================
+   الشيكات: شيكات من العملاء (لينا) وشيكات للموردين (علينا) بتاريخ الاستحقاق
+   الرصيد بيتأثر لما الشيك يتصرف فعلاً — وقتها بيتعمل سند قبض/صرف لوحده
+   ===================================================================== */
+const CHQ_ST = { pending: ['تحت التحصيل', 'warn'], collected: ['اتصرف', 'ok'], bounced: ['مرتد', 'bad'], cancelled: ['ملغي', ''] };
+VIEWS.cheques = async (el) => {
+  const st = S.chqSt || (S.chqSt = { ...newRange('month'), status: 'pending', dir: '' });
+  el.innerHTML = `<div class="toolbar"><div class="seg" id="cs">${[['pending', 'تحت التحصيل'], ['collected', 'اتصرفت'], ['bounced', 'مرتدة'], ['', 'الكل']].map(([k, t]) => `<button data-s="${k}" class="${st.status === k ? 'on' : ''}">${t}</button>`).join('')}</div>
+    <select class="in" id="cd" style="width:auto">${opt('', 'لينا وعلينا', st.dir)}${opt('in', 'من العملاء (لينا)', st.dir)}${opt('out', 'للموردين (علينا)', st.dir)}</select><span id="cr" class="row" style="gap:6px"><span class="small muted" title="تاريخ الصرف أو الارتداد — وللشيكات اللي لسه مفتوحة تاريخ الاستحقاق">التاريخ:</span>${rangeHTML(st)}</span>
+    <span class="sp"></span><button class="btn pri" id="cin">${icon('plus')}استلام شيك من عميل</button>${can('suppliers') || isAdmin() ? `<button class="btn" id="cout">${icon('plus')}شيك لمورد</button>` : ''}<button class="btn" id="csv">${icon('download')}Excel</button></div>
+    <p class="small muted" style="margin:0 0 12px">سجّل الشيك أول ما تستلمه أو تكتبه. رصيد العميل أو المورد <b>مش</b> بيتأثر غير لما تدوس "اتصرف" — ساعتها بيتعمل سند قبض أو صرف لوحده وتدخل الفلوس البنك. لو الشيك ارتد، علّمه "مرتد" ومديونية العميل بتفضل زي ما هي.</p>
+    <div class="grid g4" id="sum" style="margin-bottom:14px"></div><div id="tb"></div>`;
+  let rows = [];
+  const cols = [
+    { t: 'الاستحقاق', f: (r) => `<b class="num">${esc(r.due_date)}</b>${r.status === 'pending' ? `<div class="small ${r.overdue ? 'bad' : r.days_left <= 7 ? 'warn' : 'faint'}">${r.overdue ? `متأخر ${-r.days_left} يوم` : r.days_left === 0 ? 'النهارده' : `باقي ${r.days_left} يوم`}</div>` : ''}`, v: (r) => r.due_date },
+    ...(showBranchCol() ? [{ t: 'المعرض', f: (r) => brName(r.branch_id), v: (r) => branchOf(r.branch_id).name }] : []),
+    { t: 'النوع', f: (r) => (r.direction === 'in' ? '<span class="badge ok">من عميل (لينا)</span>' : '<span class="badge bad">لمورد (علينا)</span>'), v: (r) => (r.direction === 'in' ? 'من عميل' : 'لمورد') },
+    { t: 'العميل / المورد', f: (r) => `<b>${esc(r.party_name || '')}</b>`, v: (r) => r.party_name },
+    { t: 'المبلغ', n: 1, f: (r) => `<b>${M(r.amount, r.direction === 'in' ? 'ok' : 'bad')}</b>`, v: (r) => r.amount },
+    { t: 'رقم الشيك', f: (r) => `<span class="num">${esc(r.cheque_no || '')}</span>`, v: (r) => r.cheque_no }, { t: 'البنك', k: 'bank' },
+    { t: 'الحالة', f: (r) => `<span class="badge ${(CHQ_ST[r.status] || ['', ''])[1]}">${(CHQ_ST[r.status] || [r.status])[0]}</span>${r.done_date ? `<div class="small faint num">${esc(r.done_date.slice(0, 10))}</div>` : ''}${r.payment_status === 'void' ? '<div class="small bad">السند اتلغى</div>' : ''}`, v: (r) => (CHQ_ST[r.status] || [r.status])[0] },
+    { t: 'ملاحظات', f: (r) => esc([r.notes, r.done_notes].filter(Boolean).join(' — ')), v: (r) => [r.notes, r.done_notes].filter(Boolean).join(' — ') },
+    { t: '', noCsv: 1, f: (r) => `<span class="row" style="flex-wrap:nowrap">${r.status === 'pending' ? `<button class="btn sm ok" data-act="collect">${r.direction === 'in' ? 'اتحصّل' : 'اتصرف'}</button><button class="btn sm bad" data-act="bounce">ارتد</button>${isAdmin() ? '<button class="btn sm ghost" data-act="cancel" title="إلغاء الشيك (اتسجل غلط)">✕</button>' : ''}` : r.status === 'bounced' ? '<button class="btn sm" data-act="reopen">تقديمه تاني</button>' : ''}</span>` },
+  ];
+  const load = async () => {
+    $('#cr', el).style.display = st.status === 'pending' ? 'none' : '';
+    rows = await GET('/api/cheques', bq({ from: st.from, to: st.to, status: st.status, direction: st.dir }));
+    const pend = rows.filter((r) => r.status === 'pending'), sum = (a) => a.reduce((s, r) => s + r.amount, 0);
+    const pin = pend.filter((r) => r.direction === 'in'), pout = pend.filter((r) => r.direction === 'out');
+    $('#sum', el).innerHTML = stat('شيكات لينا (تحت التحصيل)', M(sum(pin)), `${pin.length} شيك من العملاء`, 'ok', 'cheque', '#059669') + stat('شيكات علينا (لسه متصرفتش)', M(sum(pout)), `${pout.length} شيك للموردين`, 'bad', 'cheque', '#dc2626')
+      + stat('متأخرة عن ميعادها', `<span class="num ${pend.some((r) => r.overdue) ? 'bad' : ''}">${pend.filter((r) => r.overdue).length}</span>`, money(sum(pend.filter((r) => r.overdue))), '', 'alert', '#dc2626')
+      + stat('مستحقة خلال أسبوع', `<span class="num">${pend.filter((r) => !r.overdue && r.days_left <= 7).length}</span>`, money(sum(pend.filter((r) => !r.overdue && r.days_left <= 7))), '', 'clock', '#d97706');
+    mountTable($('#tb', el), cols, rows, { act, rowCls: (r) => (r.status === 'cancelled' ? 'void' : ''), empty: st.status === 'pending' ? 'مفيش شيكات تحت التحصيل' : 'لا توجد شيكات' });
+  };
+  const act = async (a, r) => {
+    const who = `${r.direction === 'in' ? 'من' : 'لـ'} ${r.party_name} بمبلغ ${money(r.amount)}`;
+    try {
+      if (a === 'collect') {
+        modal({ title: r.direction === 'in' ? 'تحصيل الشيك' : 'صرف الشيك', body: `<p style="margin-top:0">الشيك ${esc(who)}${r.cheque_no ? ` — رقم <span class="num">${esc(r.cheque_no)}</span>` : ''}.</p><p class="small muted">هيتعمل ${r.direction === 'in' ? 'سند قبض من العميل ويقل رصيده' : 'سند صرف للمورد ويقل اللي علينا'} بنفس المبلغ.</p>
+          <div class="field"><label class="f">${r.direction === 'in' ? 'الفلوس دخلت فين؟' : 'اتصرف من فين؟'}</label><select class="in" name="method">${Object.entries(S.allMethods || S.methods).map(([k, v]) => opt(k, v, 'bank')).join('')}</select></div><div class="field"><label class="f">ملاحظة (اختياري)</label><input class="in" name="notes"></div>`,
+          buttons: [{ t: 'تأكيد', cls: 'ok pri', fn: async (mb) => { const res = await POST(`/api/cheques/${r.id}/collect`, fv(mb)); toast(`تم ✓ — الرصيد دلوقتي ${money(res.balance)}`, 'ok'); dropCache(); load(); } }, { t: 'رجوع' }] });
+      } else if (a === 'bounce') {
+        const why = await promptBox('الشيك ارتد', `الشيك ${esc(who)} — سبب الارتداد (اختياري):`); if (why === null) return;
+        await POST(`/api/cheques/${r.id}/bounce`, { notes: why }); toast('اتعلّم مرتد — رصيد ' + (r.direction === 'in' ? 'العميل' : 'المورد') + ' زي ما هو', 'ok'); load();
+      } else if (a === 'reopen') {
+        const d = await promptBox('تقديم الشيك تاني', 'تاريخ الاستحقاق الجديد (YYYY-MM-DD) — سيبه زي ما هو لو نفس التاريخ', r.due_date); if (d === null) return;
+        await POST(`/api/cheques/${r.id}/reopen`, { due_date: d }); toast('رجع تحت التحصيل', 'ok'); load();
+      } else if (a === 'cancel') {
+        if (!(await confirmBox(`إلغاء الشيك ${esc(who)}؟ (لو اتسجل غلط)`, 'إلغاء الشيك', 'bad'))) return;
+        await POST(`/api/cheques/${r.id}/cancel`, {}); toast('اتلغى', 'ok'); load();
+      }
+    } catch (e) { toast(e.message, 'bad'); }
+  };
+  const form = async (dir) => {
+    if (!curBranch()) return toast('اختار المعرض من فوق الأول', 'bad');
+    const list = dir === 'in' ? (await customers(true)).filter((c) => c.name !== 'عميل نقدي') : await suppliers(true);
+    if (!list.length) return toast(dir === 'in' ? 'مفيش عملاء مسجلين في المعرض ده' : 'مفيش موردين مسجلين في المعرض ده', 'bad');
+    const d7 = new Date(); d7.setDate(d7.getDate() + 30);
+    modal({ title: dir === 'in' ? 'استلام شيك من عميل' : 'شيك لمورد', body: `<div class="grid g2">
+      <div class="field" style="grid-column:1/-1"><label class="f">${dir === 'in' ? 'العميل *' : 'المورد *'}</label><div style="position:relative"><input class="in" id="cp" placeholder="اكتب للبحث" autocomplete="off"></div><input type="hidden" name="party_id"><div class="small muted" id="cpb" style="margin-top:4px"></div></div>
+      <div class="field"><label class="f">المبلغ *</label><input class="in" type="number" step="any" min="0" name="amount"></div>
+      <div class="field"><label class="f">تاريخ الاستحقاق *</label><input class="in" type="date" name="due_date" value="${ymd(d7)}"></div>
+      <div class="field"><label class="f">رقم الشيك</label><input class="in" name="cheque_no" dir="ltr"></div>
+      <div class="field"><label class="f">البنك</label><input class="in" name="bank" list="banks" placeholder="مثال: البنك الأهلي"><datalist id="banks">${['البنك الأهلي المصري', 'بنك مصر', 'بنك القاهرة', 'CIB التجاري الدولي', 'بنك الإسكندرية', 'QNB', 'بنك فيصل', 'البنك العربي الأفريقي', 'بنك الكويت الوطني', 'HSBC'].map((x) => `<option value="${x}">`).join('')}</datalist></div>
+      <div class="field" style="grid-column:1/-1"><label class="f">ملاحظات</label><input class="in" name="notes"></div></div>`,
+      buttons: [{ t: 'حفظ الشيك', cls: 'pri', fn: async (mb) => { const v = fv(mb); if (!v.party_id) throw new Error(dir === 'in' ? 'اختار العميل من القائمة' : 'اختار المورد من القائمة'); await POST('/api/cheques', { ...v, direction: dir, branch_id: curBranch() }); toast('اتسجل الشيك ✓', 'ok'); st.status = 'pending'; route(); } }, { t: 'إلغاء' }],
+      onOpen: (mb) => picker($('#cp', mb), { items: () => list, match: (c, q) => c.name.toLowerCase().includes(q) || (c.phone || '').includes(q), label: (c) => esc(c.name), sub: (c) => `${esc(c.phone || '')} · الرصيد ${money(c.balance)}`, onPick: (c) => { $('#cp', mb).value = c.name; $('[name=party_id]', mb).value = c.id; $('#cpb', mb).innerHTML = `الرصيد الحالي: ${M(c.balance)} ${dir === 'in' ? '(عليه)' : '(له)'}`; if (!$('[name=amount]', mb).value && c.balance > 0) $('[name=amount]', mb).value = c.balance; } }) });
+  };
+  $$('#cs button', el).forEach((b) => (b.onclick = () => { st.status = b.dataset.s; $$('#cs button', el).forEach((x) => x.classList.toggle('on', x === b)); load(); }));
+  $('#cd', el).onchange = (e) => { st.dir = e.target.value; load(); };
+  bindRange(el, st, load);
+  $('#cin', el).onclick = () => form('in'); if ($('#cout', el)) $('#cout', el).onclick = () => form('out');
+  $('#csv', el).onclick = () => exportCSV('الشيكات', cols, rows);
+  await load();
+};
+
 VIEWS.reports = async (el) => {
   const st = S.repSt || (S.repSt = { ...newRange('month'), tab: 'sales', group: 'day' });
-  const tabs = [['sales', 'تقرير المبيعات'], ...(can('see_cost') ? [['pnl', 'الأرباح والخسائر']] : []), ...(S.branches.length > 1 ? [['compare', 'مقارنة المعارض']] : []), ['inv', 'تقييم المخزون'], ['bal', 'المديونيات'], ...(isAdmin() ? [['audit', 'سجل العمليات']] : [])];
+  const tabs = [['sales', 'تقرير وتحليل المبيعات'], ...(can('see_cost') ? [['pnl', 'الأرباح والخسائر']] : []), ...(S.branches.length > 1 ? [['compare', 'مقارنة المعارض']] : []), ['inv', 'تقييم المخزون'], ['stagnant', 'الأصناف الراكدة'], ['bal', 'المديونيات'], ...(isAdmin() ? [['audit', 'سجل العمليات']] : [])];
   el.innerHTML = `<div class="tabs">${tabs.map(([k, t]) => `<button data-t="${k}" class="${st.tab === k ? 'on' : ''}">${t}</button>`).join('')}</div><div id="rv"></div>`;
   $$('.tabs button', el).forEach((b) => (b.onclick = () => { st.tab = b.dataset.t; route(); }));
   const rv = $('#rv', el);
   const sub = () => `${rangeLabel(st)} — ${curBranch() ? branchOf(curBranch()).name : 'كل المعارض'}`;
   if (st.tab === 'sales') {
-    const G = [['day', 'يومي'], ['month', 'شهري'], ['product', 'حسب الصنف'], ['category', 'حسب التصنيف'], ['user', 'حسب الكاشير'], ...(isAdmin() ? [['branch', 'حسب المعرض']] : [])];
-    rv.innerHTML = `<div class="toolbar">${rangeHTML(st)}<select class="in" id="gg">${G.map(([k, t]) => opt(k, t, st.group)).join('')}</select><span class="sp"></span><button class="btn" id="csv">${icon('download')}Excel</button><button class="btn" id="prn">${icon('print')}طباعة</button></div><div class="grid g4" id="sm" style="margin-bottom:14px"></div><div id="tb"></div><div id="mt" style="margin-top:14px"></div>`;
+    const G = [['day', 'يومي'], ['month', 'شهري'], ['product', 'حسب الصنف'], ['category', 'حسب التصنيف'], ['customer', 'حسب العميل (أكبر العملاء)'], ['invoice', 'ربحية كل فاتورة'], ['user', 'حسب الكاشير'], ...(isAdmin() ? [['branch', 'حسب المعرض']] : [])];
+    // فلتر العميل: يشتغل لما المعرض محدد (العملاء تبع كل معرض)
+    const custs = curBranch() && can('customers') ? await customers().catch(() => []) : [];
+    if (st.cust && !custs.some((c) => c.id === +st.cust)) st.cust = '';
+    rv.innerHTML = `<div class="toolbar">${rangeHTML(st)}<select class="in" id="gg" style="width:auto">${G.map(([k, t]) => opt(k, t, st.group)).join('')}</select>${custs.length ? `<select class="in" id="gc" style="width:auto;max-width:220px">${opt('', 'كل العملاء', st.cust)}${custs.filter((c) => c.name !== 'عميل نقدي').map((c) => opt(c.id, c.name, st.cust)).join('')}</select>` : ''}<span class="sp"></span><button class="btn" id="csv">${icon('download')}Excel</button><button class="btn" id="prn">${icon('print')}طباعة</button></div><div id="hint"></div><div class="grid g4" id="sm" style="margin-bottom:14px"></div><div id="tb"></div><div id="mt" style="margin-top:14px"></div>`;
     let d, cols;
+    const custName = () => (st.cust ? (custs.find((c) => c.id === +st.cust) || {}).name : '');
     const load = async () => {
-      d = await GET('/api/reports/sales', bq({ from: st.from, to: st.to, group: st.group }));
-      const s = d.summary; const sc = can('see_cost');
-      $('#sm', rv).innerHTML = stat('المبيعات', M(s.sales), `${s.count} فاتورة · خصومات ${money(s.discounts)}`) + stat('المرتجعات', M(s.returns)) + stat('صافي المبيعات', M(s.net)) + (sc ? stat('مجمل الربح', M(s.gross_profit), `تكلفة البضاعة ${money(s.cogs)} · هامش ${s.net ? Math.round((s.gross_profit / s.net) * 100) : 0}%`, 'ok') : stat('متوسط الفاتورة', M(s.count ? s.sales / s.count : 0)));
+      if ($('#gc', rv)) $('#gc', rv).style.display = st.group === 'customer' ? 'none' : '';
+      const cf = st.group === 'customer' ? '' : st.cust || '';
+      d = await GET('/api/reports/sales', bq({ from: st.from, to: st.to, group: st.group, customer: cf }));
+      const sc = can('see_cost');
+      if (cf) { // ملخص العميل المختار محسوب من الجدول
+        const sum = (k) => d.rows.reduce((a, r) => a + (r[k] || 0), 0); const isItemG = st.group === 'product' || st.group === 'category';
+        const net = sum('total'), prof = sum('profit');
+        $('#sm', rv).innerHTML = stat(`مشتريات ${esc(custName())}`, M(net), isItemG ? `${d.rows.length} صنف` : `${sum('cnt')} فاتورة`, '', 'users', '#d97706') + (isItemG ? '' : stat('المرتجع', M(sum('returns')))) + (sc ? stat('مجمل الربح منه', M(prof), `هامش ${net ? Math.round((prof / net) * 100) : 0}%`, 'ok') : '');
+      } else {
+        const s = d.summary;
+        $('#sm', rv).innerHTML = stat('المبيعات', M(s.sales), `${s.count} فاتورة · خصومات ${money(s.discounts)}`) + stat('المرتجعات', M(s.returns)) + stat('صافي المبيعات', M(s.net)) + (sc ? stat('مجمل الربح', M(s.gross_profit), `تكلفة البضاعة ${money(s.cogs)} · هامش ${s.net ? Math.round((s.gross_profit / s.net) * 100) : 0}%`, 'ok') : stat('متوسط الفاتورة', M(s.count ? s.sales / s.count : 0)));
+      }
+      $('#hint', rv).innerHTML = st.group === 'customer' ? '<p class="small muted" style="margin:0 0 10px">مرتّبين من الأكبر للأصغر. دوس على العميل تشوف كشف حسابه — أو اختار "حسب الصنف" وحدد العميل من فوق عشان تعرف بيشتري إيه.</p>' : st.group === 'invoice' ? `<p class="small muted" style="margin:0 0 10px">كل فاتورة لوحدها${sc ? ' بتكلفتها وربحها — الأحمر فاتورة اتباعت بخسارة' : ''}. دوس على الفاتورة تفتحها.</p>` : '';
       const isItem = st.group === 'product' || st.group === 'category';
-      cols = [...(st.group === 'product' ? [{ t: 'الكود', k: 'code' }] : []), { t: { day: 'اليوم', month: 'الشهر', product: 'الصنف', category: 'التصنيف', user: 'الكاشير', branch: 'المعرض' }[st.group], f: (r) => esc(r.label ?? '—'), v: (r) => r.label },
-        ...(isItem ? [{ t: 'الكمية', n: 1, f: (r) => Q(r.qty), v: (r) => r.qty }] : [{ t: 'عدد الفواتير', n: 1, k: 'cnt' }, { t: 'المبيعات', n: 1, f: (r) => M(r.sales), v: (r) => r.sales }, { t: 'المرتجع', n: 1, f: (r) => M(r.returns), v: (r) => r.returns }, { t: 'الخصومات', n: 1, f: (r) => M(r.discount), v: (r) => r.discount }]),
-        { t: 'الصافي', n: 1, f: (r) => `<b>${M(r.total)}</b>`, v: (r) => r.total }, ...(sc ? [{ t: 'التكلفة', n: 1, f: (r) => M(r.cost), v: (r) => r.cost }, { t: 'مجمل الربح', n: 1, f: (r) => M(r.profit, r.profit < 0 ? 'bad' : 'ok'), v: (r) => r.profit }, { t: 'الهامش', n: 1, f: (r) => `<span class="num">${r.total ? Math.round((r.profit / r.total) * 100) : 0}%</span>`, noCsv: 1 }] : [])];
+      const isInv = st.group === 'invoice', isCust = st.group === 'customer';
+      cols = [...(st.group === 'product' ? [{ t: 'الكود', k: 'code' }] : []),
+        ...(isInv ? [{ t: 'التاريخ', f: (r) => dt(r.date), v: (r) => r.date }] : []),
+        { t: { day: 'اليوم', month: 'الشهر', product: 'الصنف', category: 'التصنيف', user: 'الكاشير', branch: 'المعرض', customer: 'العميل', invoice: 'الفاتورة' }[st.group], f: (r) => (isInv ? `<b class="num">${esc(r.label)}</b>${r.cnt ? '' : ' <span class="badge warn">مرتجع</span>'}` : esc(r.label ?? '—')), v: (r) => r.label },
+        ...(isInv ? [{ t: 'العميل', k: 'party' }] : []), ...(isCust ? [{ t: 'الموبايل', k: 'phone' }, { t: 'آخر شراء', f: (r) => dt(r.last), v: (r) => r.last }] : []),
+        ...(showBranchCol() && (isInv || isCust) ? [{ t: 'المعرض', f: (r) => brName(r.branch_id), v: (r) => branchOf(r.branch_id).name }] : []),
+        ...(isItem ? [{ t: 'الكمية', n: 1, f: (r) => Q(r.qty), v: (r) => r.qty }] : isInv ? [{ t: 'الخصم', n: 1, f: (r) => (r.discount ? M(r.discount) : ''), v: (r) => r.discount }] : [{ t: 'عدد الفواتير', n: 1, k: 'cnt' }, { t: 'المبيعات', n: 1, f: (r) => M(r.sales), v: (r) => r.sales }, { t: 'المرتجع', n: 1, f: (r) => M(r.returns), v: (r) => r.returns }, { t: 'الخصومات', n: 1, f: (r) => M(r.discount), v: (r) => r.discount }]),
+        { t: 'الصافي', n: 1, f: (r) => `<b>${M(r.total)}</b>`, v: (r) => r.total }, ...(sc ? [{ t: 'التكلفة', n: 1, f: (r) => M(r.cost), v: (r) => r.cost }, { t: 'مجمل الربح', n: 1, f: (r) => M(r.profit, r.profit < 0 ? 'bad' : 'ok'), v: (r) => r.profit }, { t: 'الهامش', n: 1, f: (r) => `<span class="num ${r.profit < 0 ? 'bad' : ''}">${r.total ? Math.round((r.profit / r.total) * 100) : 0}%</span>`, noCsv: 1 }] : [])];
       const sumK = (k) => money(d.rows.reduce((a, r) => a + (r[k] || 0), 0));
       const foot = cols.map((c, i) => (i === 0 ? 'الإجمالي' : c.v && ['total', 'cost', 'profit', 'sales', 'returns', 'discount'].some((k) => c.v({ [k]: 1 }) === 1) ? sumK(['total', 'cost', 'profit', 'sales', 'returns', 'discount'].find((k) => c.v({ [k]: 1 }) === 1)) : ''));
-      mountTable($('#tb', rv), cols, d.rows, { foot, empty: 'لا توجد مبيعات في الفترة' });
+      const click = isInv ? (r) => saleModal(r.sale_id) : isCust ? (r) => (r.cid ? statement('customer', { id: r.cid, name: r.label }) : null) : null;
+      mountTable($('#tb', rv), cols, d.rows, { foot, empty: 'لا توجد مبيعات في الفترة', maxh: isInv || isCust ? '62vh' : '', click, rowCls: (r) => (isInv && r.cnt && r.profit < 0 ? 'bad' : '') });
       d.foot = foot;
-      $('#mt', rv).innerHTML = `<div class="card" style="max-width:480px"><div class="hd">صافي التحصيل حسب طريقة الدفع</div>${tableHTML([{ t: 'الطريقة', f: (r) => mName(r.method) }, { t: 'المبلغ', n: 1, f: (r) => M(r.v) }], d.methods)}</div>`;
+      $('#mt', rv).innerHTML = cf ? '' : `<div class="card" style="max-width:480px"><div class="hd">صافي التحصيل حسب طريقة الدفع</div>${tableHTML([{ t: 'الطريقة', f: (r) => mName(r.method) }, { t: 'المبلغ', n: 1, f: (r) => M(r.v) }], d.methods)}</div>`;
     };
     bindRange(rv, st, load); $('#gg', rv).onchange = (e) => { st.group = e.target.value; load(); };
-    $('#csv', rv).onclick = () => exportCSV('تقرير-المبيعات', cols, d.rows);
-    $('#prn', rv).onclick = () => printReport('تقرير المبيعات', sub(), tableHTML(cols.filter((c) => !c.noCsv), d.rows, d.foot.filter((_, i) => !cols[i].noCsv)));
+    if ($('#gc', rv)) $('#gc', rv).onchange = (e) => { st.cust = e.target.value; load(); };
+    const title = () => (G.find(([k]) => k === st.group) || [, 'تقرير المبيعات'])[1] + (st.cust && st.group !== 'customer' ? ` — ${custName()}` : '');
+    $('#csv', rv).onclick = () => exportCSV('تقرير-المبيعات-' + title(), cols, d.rows);
+    $('#prn', rv).onclick = () => printReport('تقرير المبيعات: ' + title(), sub(), tableHTML(cols.filter((c) => !c.noCsv), d.rows, d.foot.filter((_, i) => !cols[i].noCsv)));
+    return load();
+  }
+  if (st.tab === 'stagnant') {
+    st.days = st.days || 60;
+    rv.innerHTML = `<div class="toolbar"><label class="f" style="margin:0">أصناف عليها رصيد ومتباعتش من</label><select class="in" id="sd" style="width:auto">${[30, 60, 90, 180, 365].map((n) => opt(n, n + ' يوم', st.days)).join('')}</select><span class="sp"></span><button class="btn" id="csv">${icon('download')}Excel</button><button class="btn" id="prn">${icon('print')}طباعة</button></div>
+      <p class="small muted" style="margin:0 0 12px">دي البضاعة اللي فلوسك محبوسة فيها. ممكن تعمل عليها عرض أو خصم، أو توقف طلبها من المورد، أو تنقلها للمعرض التاني لو بتتباع هناك. الصنف اللي عمره ما اتباع بيتحسب من آخر مرة دخل المخزن.</p>
+      <div class="grid g3" id="sm" style="margin-bottom:14px"></div><div id="tb"></div>`;
+    let d, cols;
+    const load = async () => {
+      d = await GET('/api/reports/stagnant', bq({ days: st.days })); const sc = can('see_cost');
+      $('#sm', rv).innerHTML = stat('عدد الأصناف الراكدة', `<span class="num">${d.rows.length}</span>`, `مفيش بيع من ${d.days} يوم أو أكتر`, '', 'layers', '#7c3aed') + (sc ? stat('قيمتها بالتكلفة', M(d.total_cost), 'فلوس محبوسة في المخزن', 'warn', 'coins', '#d97706') : '') + stat('قيمتها بسعر البيع', M(d.total_price), '', '', 'tag', '#2563eb');
+      cols = [{ t: 'الكود', k: 'code' }, ...(showBranchCol() ? [{ t: 'المعرض', f: (r) => brName(r.branch_id), v: (r) => r.branch_name }] : []), { t: 'الصنف', f: (r) => `<b>${esc(r.name)}</b>`, v: (r) => r.name }, { t: 'التصنيف', k: 'category' },
+        { t: 'الرصيد', n: 1, f: (r) => `${Q(r.stock)} <span class="faint small">${esc(r.unit || '')}</span>`, v: (r) => r.stock },
+        { t: 'آخر بيع', f: (r) => (r.last_sale ? dt(r.last_sale) : '<span class="badge warn">عمره ما اتباع</span>'), v: (r) => r.last_sale || 'عمره ما اتباع' },
+        { t: 'راكد من', n: 1, f: (r) => `<b class="num ${r.days >= 180 ? 'bad' : 'warn'}">${r.days}</b> <span class="faint small">يوم</span>`, v: (r) => r.days },
+        ...(sc ? [{ t: 'القيمة بالتكلفة', n: 1, f: (r) => M(r.value_cost), v: (r) => r.value_cost }] : []), { t: 'القيمة بالبيع', n: 1, f: (r) => M(r.value_price), v: (r) => r.value_price }];
+      const foot = cols.map((c, i) => (i === 0 ? 'الإجمالي' : c.t === 'القيمة بالتكلفة' ? money(d.total_cost) : c.t === 'القيمة بالبيع' ? money(d.total_price) : ''));
+      mountTable($('#tb', rv), cols, d.rows, { foot, maxh: '60vh', empty: `مفيش أصناف راكدة — كل الأصناف اتباع منها في آخر ${d.days} يوم ✓`, click: (r) => productCard(r.id) });
+      d.foot = foot;
+    };
+    $('#sd', rv).onchange = (e) => { st.days = +e.target.value; load(); };
+    $('#csv', rv).onclick = () => exportCSV('الأصناف-الراكدة', cols, d.rows);
+    $('#prn', rv).onclick = () => printReport(`الأصناف الراكدة (مفيش بيع من ${d.days} يوم)`, curBranch() ? branchOf(curBranch()).name : 'كل المعارض', tableHTML(cols, d.rows, d.foot));
     return load();
   }
   if (st.tab === 'compare') {
