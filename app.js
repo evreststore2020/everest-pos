@@ -42,9 +42,12 @@ const BASE = window.POS_BASE || '/';
 const ONLINE_URL = 'https://evreststore2020.github.io/everest-pos/';
 // وضع الأونلاين: لو config.js فيه بيانات Supabase، كل الطلبات بتروح لـ Supabase بدل السيرفر المحلي
 const SB = window.POS_CONFIG && window.POS_CONFIG.supabaseUrl && window.POS_CONFIG.supabaseKey ? window.POS_CONFIG : null;
+// كل شاشة ليها دخول منفصل: دخول الإدارة مايفتحش شاشة الكاشير والعكس (حتى على نفس الجهاز)
+const tokKey = () => 'pos_token_' + (S.mode === 'admin' ? 'admin' : 'cashier');
+try { localStorage.removeItem('pos_token'); } catch {} // الدخول القديم المشترك
 async function sbApi(method, url, body) {
   const u = new URL(url, location.origin);
-  const payload = { p_token: LS.get('pos_token', null), p_method: method, p_path: u.pathname, p_query: Object.fromEntries(u.searchParams), p_body: body || {} };
+  const payload = { p_token: LS.get(tokKey(), null), p_method: method, p_path: u.pathname, p_query: Object.fromEntries(u.searchParams), p_body: body || {} };
   const netErr = () => { const e = new Error('مفيش اتصال بالإنترنت'); e.offline = true; return e; };
   let r; try {
     r = await fetch(SB.supabaseUrl.replace(/\/+$/, '') + '/rest/v1/rpc/pos_api', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: SB.supabaseKey, Authorization: 'Bearer ' + SB.supabaseKey }, body: JSON.stringify(payload) });
@@ -53,11 +56,11 @@ async function sbApi(method, url, body) {
   let d = null; try { d = await r.json(); } catch {}
   if (!r.ok || !d || typeof d.ok !== 'boolean') throw new Error((d && (d.message || d.error)) || 'تعذر الاتصال بقاعدة البيانات (Supabase)');
   if (!d.ok) {
-    if (d.status === 401 && u.pathname !== '/api/login') { LS.set('pos_token', null); S.user = null; renderLogin(); }
+    if (d.status === 401 && u.pathname !== '/api/login') { LS.set(tokKey(), null); S.user = null; renderLogin(); }
     const e = new Error(d.error || 'خطأ'); e.status = d.status; throw e;
   }
-  if (u.pathname === '/api/login') LS.set('pos_token', d.data.token);
-  if (u.pathname === '/api/logout') LS.set('pos_token', null);
+  if (u.pathname === '/api/login') LS.set(tokKey(), d.data.token);
+  if (u.pathname === '/api/logout') LS.set(tokKey(), null);
   const data = d.data;
   if (u.pathname === '/api/me' && data) { // طرق الدفع بتيجي مرتبة كقائمة
     if (Array.isArray(data.methods)) data.methods = Object.fromEntries(data.methods);
@@ -596,7 +599,7 @@ function renderLogin(msg) {
       <div><h2>كاشير ومحاسبة<br>معارض الدهانات</h2><p>البيع والمخزون والحسابات للمعرضين في مكان واحد — وكل عملية بتوصل للمدير لحظتها.</p>
       <ul><li><i>🧾</i> فواتير وإيصالات ومرتجعات</li><li><i>💳</i> كاش، فيزا، إنستاباي، فودافون كاش</li><li><i>📊</i> أرباح وتقارير ومخزون لحظة بلحظة</li></ul></div>
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">${dashCredit(true)}<span class="small" style="color:#7c8aa5">© ${new Date().getFullYear()}</span></div></div>
-    <div class="login-side"><form class="login" id="lf"><div class="row" style="margin-bottom:18px"><span class="logo">${adm ? '👑' : '🧾'}</span><span class="sp"></span><a href="${BASE}" id="chg" class="btn sm ghost">⇄ تغيير الشاشة</a></div>
+    <div class="login-side"><form class="login" id="lf"><div class="row" style="margin-bottom:18px"><span class="logo">${adm ? '👑' : '🧾'}</span><span class="sp"></span></div>
     <span class="badge ${adm ? 'pri' : 'ok'}" style="margin-bottom:8px">${adm ? 'شاشة المدير العام' : 'شاشة الكاشير'}</span>
     <h1>${adm ? 'دخول المدير العام' : 'دخول الكاشير'}</h1><p class="muted" style="margin:0 0 22px">${adm ? 'التقارير والحسابات وكل المعارض' : 'سجّل دخولك وابدأ البيع'}</p>
     ${adm
@@ -611,7 +614,6 @@ function renderLogin(msg) {
     e.preventDefault(); const b = $('#lf button'); b.disabled = true;
     try { const v = fv($('#lf')); if (adm) LS.set('pos_admin_name', v.username); await POST('/api/login', { ...v, mode: S.mode }); await boot(); } catch (er) { $('#lerr').textContent = er.message; } finally { b.disabled = false; }
   };
-  $('#chg').onclick = (e) => { e.preventDefault(); goMode(''); renderChoice(); };
 }
 function changePassword(forced) {
   modal({
@@ -680,7 +682,7 @@ function renderShell() {
     <nav>${NAV.filter(navOk).map((n) => (n.grp ? `<div class="grp">${n.grp}</div>` : `<a href="#/${n.id}" data-v="${n.id}">${icon(n.i)}${n.t}</a>`)).join('').replace(/<div class="grp">[^<]*<\/div>(?=<div class="grp">|$)/g, '')}</nav>
     <div class="me"><div class="row" style="flex-wrap:nowrap;gap:10px"><span class="avatar">${esc(initial(u.name))}</span><div style="min-width:0"><div style="color:#fff;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(u.name)}</div><div style="color:#7c8aa5">المدير العام · كل المعارض</div></div></div>
     <div class="row" style="margin-top:10px"><button class="btn sm" id="chpw">${icon('key')}كلمة المرور</button><button class="btn sm" id="logout">${icon('logout')}خروج</button></div></div></aside>
-    <div class="main"><header class="top"><button class="btn ghost menu-btn" id="menu">${icon('menu')}</button><div class="sp"><h2 id="vt"></h2><div class="sub">${arDate()}</div></div>${seg}<button class="btn" id="camBtn" title="الكاميرات — افتح الكاميرات أو راجع التسجيل">📹 الكاميرات</button><a class="btn" href="${BASE}cashier/" target="_blank" title="فتح شاشة الكاشير في تاب جديد">${icon('cart')}شاشة الكاشير</a><button class="btn ghost" data-theme-btn title="الوضع الليلي">${themeIcon()}</button><span class="clock num" data-clock></span></header><main class="content" id="view"></main></div></div>`;
+    <div class="main"><header class="top"><button class="btn ghost menu-btn" id="menu">${icon('menu')}</button><div class="sp"><h2 id="vt"></h2><div class="sub">${arDate()}</div></div>${seg}<button class="btn" id="camBtn" title="الكاميرات — افتح الكاميرات أو راجع التسجيل">📹 الكاميرات</button><button class="btn ghost" data-theme-btn title="الوضع الليلي">${themeIcon()}</button><span class="clock num" data-clock></span></header><main class="content" id="view"></main></div></div>`;
   $('#logout').onclick = logout;
   $('#chpw').onclick = () => changePassword(false);
   $('#menu').onclick = () => $('#side').classList.toggle('open');
@@ -693,7 +695,7 @@ function renderShell() {
 function renderCashierShell() {
   const u = S.user; const b = branchOf(curBranch());
   // المدير لما يفتح شاشة الكاشير: يختار المعرض من فوق
-  const adminSeg = isAdmin() ? `<div class="seg dark" id="brseg">${S.branches.map((x) => `<button data-b="${x.id}" class="${S.branch === x.id ? 'on' : ''}"><span class="dot" style="background:${esc(x.color)}"></span>${esc(x.name)}</button>`).join('')}</div><a class="btn sm" href="${BASE}admin/" style="background:rgba(255,255,255,.1);border-color:transparent;color:#fff">👑 لوحة المدير</a>` : '';
+  const adminSeg = isAdmin() ? `<div class="seg dark" id="brseg">${S.branches.map((x) => `<button data-b="${x.id}" class="${S.branch === x.id ? 'on' : ''}"><span class="dot" style="background:${esc(x.color)}"></span>${esc(x.name)}</button>`).join('')}</div>` : '';
   $('#app').innerHTML = `<div class="cshell"><header class="ctop">
       <div class="cbrand"><span class="logo" style="background:linear-gradient(135deg,${esc(b.color || '#3b82f6')},#1e3a8a)">${icon('roller')}</span><div><b>${esc(b.name || '')}</b><span>${esc(S.settings.company_name || '')}</span></div></div>
       <nav class="ctabs">${cashierNav().map((n) => `<a href="#/${n.id}" data-v="${n.id}">${icon(n.i)}${navTitle(n)}</a>`).join('')}</nav>
@@ -746,7 +748,8 @@ async function boot() {
     const me = await GET('/api/me');
     S.user = me.user; S.branches = me.branches; S.settings = me.settings; S.methods = me.methods; S.allMethods = me.all_methods;
     if (isAdmin() && S.branch && !S.branches.some((b) => b.id === S.branch)) S.branch = 0;
-    // الكاشير دايماً على شاشة الكاشير. المدير: لو مفيش شاشة محددة يروح لوحة المدير
+    // الشاشتين منفصلين: الكاشير على شاشة الكاشير بس، والمدير على لوحة الإدارة بس
+    if (isAdmin() && S.mode === 'cashier') { S.user = null; if (SB) LS.set(tokKey(), null); applyTheme(); return renderLogin('حساب المدير بيدخل من لوحة الإدارة بس — الشاشة دي للكاشير'); }
     if (!isAdmin()) goMode('cashier', true); else if (!S.mode) goMode('admin', true);
     applyTheme();
     renderShell(); route(); startNotifier(); startPermWatch();
