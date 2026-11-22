@@ -1324,9 +1324,10 @@ VIEWS.pos = async (el) => {
   const ps = $('#ps', el), pg = $('#pg', el);
   // فلتر الشركة + التصنيف (بيتلفّوا على كذا سطر، وجنب كل واحد العدد)
   const brandOf = (p) => brandLabel(p.brand);
-  // الشركات مترتبة بعدد الأصناف، و"أخرى" في الآخر
-  const bCount = {}; for (const p of prods) bCount[brandOf(p)] = (bCount[brandOf(p)] || 0) + 1;
-  const brands = Object.keys(bCount).sort((a, b) => (a === 'أخرى') - (b === 'أخرى') || bCount[b] - bCount[a]);
+  // الشركات وأقسامها بالترتيب اللي انت عامله في "الشركات والأقسام" (وبعدها أي حاجة جديدة بعدد الأصناف)
+  const tree = catalogTree(prods).filter((b) => b.n > 0);
+  const bCount = {}; for (const b of tree) bCount[b.name] = b.n;
+  const brands = tree.map((b) => b.name);
   if (st.brand && !brands.includes(st.brand)) st.brand = '';
   // الفلتر على مرحلتين: الشركة الأول ← وبعدين أقسامها بس (عشان مايبقاش فيه 20 قسم مرة واحدة)
   const renderFilters = () => {
@@ -1334,7 +1335,7 @@ VIEWS.pos = async (el) => {
     const inBrand = prods.filter((p) => !st.brand || brandOf(p) === st.brand);
     const catCount = {}; for (const p of inBrand) if (p.category) catCount[p.category] = (catCount[p.category] || 0) + 1;
     if (st.cat && !catCount[st.cat]) st.cat = '';
-    const catList = Object.keys(catCount).sort((a, b) => catCount[b] - catCount[a]);
+    const tb = tree.find((b) => b.name === st.brand); const catList = tb ? tb.cats.filter((c) => c.name && catCount[c.name]).map((c) => c.name) : Object.keys(catCount).sort((a, b) => catCount[b] - catCount[a]);
     const showCats = (!multi || st.brand) && catList.length > 0;
     $('#filters', el).innerHTML = (multi ? `<div class="chips brands">${[['', 'كل الشركات', prods.length], ...brands.map((b) => [b, b, bCount[b]])].map(([k, t, n]) => `<button class="chip brand ${st.brand === k ? 'on' : ''}" data-b="${esc(k)}">${esc(t)} <span class="cnt">${n}</span></button>`).join('')}</div>` : '')
       + (showCats ? `<div style="${multi ? 'margin-top:8px;padding:2px 10px 4px;border-inline-start:3px solid var(--pri);background:var(--pri-soft);border-radius:10px' : ''}">
@@ -1735,7 +1736,7 @@ VIEWS.products = async (el) => {
   const sc = can('see_cost');
   el.innerHTML = `<div class="toolbar"><input class="in" id="pq" placeholder="بحث بالاسم / الكود / الباركود" value="${esc(st.q)}" style="width:240px">${camBtn('pqcam')}<select class="in" id="pc"></select>
     <label class="chk"><input type="checkbox" id="pl" ${st.low ? 'checked' : ''}> النواقص فقط</label>${isAdmin() ? `<label class="chk"><input type="checkbox" id="pi" ${st.inactive ? 'checked' : ''}> إظهار الموقوفة</label>` : ''}
-    <span class="sp"></span>${can('products') ? `<button class="btn pri" id="pa">${icon('plus')}صنف جديد</button><button class="btn" id="pbulk">${icon('layers')}إضافة أصناف كتير</button>` : ''}${isAdmin() ? `<button class="btn" id="pimp">${icon('upload')}استيراد</button>` : ''}<button class="btn" id="pcsv">${icon('download')}Excel</button><button class="btn" id="pprn">${icon('print')}قائمة أسعار</button>${can('products') ? `<button class="btn" id="pbc">${icon('scan')}ملصقات باركود</button>` : ''}${isAdmin() ? '<button class="btn" id="prp" title="سعر البيع = سعر لستة الشركة + الضريبة + هامش الربح">💲 تسعير بهامش ربح</button>' : ''}${can('products') ? '<button class="btn" id="pcol" title="أكواد الألوان اللي الكاشير بيختار منها">🎨 كتالوج الألوان</button>' : ''}</div>
+    <span class="sp"></span>${can('products') ? `<button class="btn pri" id="pa">${icon('plus')}صنف جديد</button><button class="btn" id="pbulk">${icon('layers')}إضافة أصناف كتير</button>` : ''}${isAdmin() ? `<button class="btn" id="pimp">${icon('upload')}استيراد</button>` : ''}<button class="btn" id="pcsv">${icon('download')}Excel</button><button class="btn" id="pprn">${icon('print')}قائمة أسعار</button>${can('products') ? `<button class="btn" id="pbc">${icon('scan')}ملصقات باركود</button>` : ''}${isAdmin() ? '<button class="btn" id="prp" title="سعر البيع = سعر لستة الشركة + الضريبة + هامش الربح">💲 تسعير بهامش ربح</button>' : ''}${can('products') ? '<button class="btn" id="pcol" title="أكواد الألوان اللي الكاشير بيختار منها">🎨 كتالوج الألوان</button><button class="btn" id="pcat" title="ترتيب الشركات وأقسامها اللي بتظهر كفلتر في الكاشير">🗂 الشركات والأقسام</button>' : ''}</div>
     <div class="grid g4" id="psum" style="margin-bottom:14px"></div><div id="ptb"></div>`;
   let all = [], rows = [];
   const cols = [
@@ -1780,6 +1781,7 @@ VIEWS.products = async (el) => {
   if ($('#pbulk', el)) $('#pbulk', el).onclick = () => { if (!curBranch()) return toast('اختار المعرض من فوق الأول', 'bad'); bulkAdd(all, load); };
   if ($('#prp', el)) $('#prp', el).onclick = () => { if (!curBranch()) return toast('اختار المعرض من فوق الأول', 'bad'); repriceModal(all, load); };
   if ($('#pcol', el)) $('#pcol', el).onclick = () => colorsCatalog();
+  if ($('#pcat', el)) $('#pcat', el).onclick = () => catalogManager(() => route());
   $('#pprn', el).onclick = () => printReport('قائمة الأسعار', `${rows.length} صنف`, tableHTML([{ t: 'الكود', k: 'code' }, { t: 'الصنف', k: 'name' }, { t: 'التصنيف', k: 'category' }, { t: 'السعر', n: 1, f: (r) => money(r.price) }], rows));
   await load();
 };
@@ -1823,6 +1825,106 @@ async function colorsCatalog() {
 }
 /* اقتراحات التصنيفات والشركات (الموجود + تصنيفات العدة والإكسسوار) */
 const EXTRA_CATS = ['عدة وأدوات', 'فرش ورولات', 'إكسسوارات', 'سنفرة وصنفرة', 'شرائط ولواصق', 'تنر ومذيبات', 'أكياس ونايلون حماية', 'بخاخات (سبراي)', 'سيليكون وفوم'];
+/* ---------- الشركات والأقسام: ترتيبك انت (من الإعدادات) + أي شركة/قسم مكتوب على الأصناف ---------- */
+const brandRaw = (label) => (label === 'أخرى' ? '' : label);
+function catalogTree(prods) {
+  const map = new Map();
+  const getB = (name) => { if (!map.has(name)) map.set(name, { name, n: 0, cfg: false, cats: new Map() }); return map.get(name); };
+  for (const c of S.settings.catalog || []) { const b = getB(c.name); b.cfg = true; for (const k of c.cats || []) b.cats.set(k, { name: k, n: 0, cfg: true }); }
+  for (const p of prods || []) { const b = getB(brandLabel(p.brand)); b.n++; const k = p.category || ''; if (!b.cats.has(k)) b.cats.set(k, { name: k, n: 0, cfg: false }); b.cats.get(k).n++; }
+  const order = (arr, isB) => [...arr.filter((x) => x.cfg), ...arr.filter((x) => !x.cfg && (isB ? x.name !== 'أخرى' : x.name !== '')).sort((a, b) => b.n - a.n), ...arr.filter((x) => !x.cfg && (isB ? x.name === 'أخرى' : x.name === ''))];
+  return order([...map.values()], true).map((b) => ({ ...b, cats: order([...b.cats.values()], false) }));
+}
+async function catalogManager(onDone) {
+  if (!curBranch()) return toast('اختار المعرض من فوق الأول', 'bad');
+  let prods = await products(true); let tree = catalogTree(prods); let sel = (tree[0] || {}).name || ''; let selCat = null; const chk = new Set();
+  const cfgOf = () => tree.filter((b) => b.name !== 'أخرى' || b.cfg).map((b) => ({ name: b.name, cats: b.cats.filter((c) => c.name).map((c) => c.name) }));
+  const save = async (cfg) => { S.settings.catalog = await PUT('/api/catalog', { catalog: cfg || cfgOf() }); };
+  const reload = async () => { dropCache(); prods = await products(true); tree = catalogTree(prods); render(); };
+  const bulk = async (ids, set) => { if (ids.length) await POST('/api/products/bulk', { branch_id: curBranch(), ids, set }); };
+  const idsOf = (bn, cn) => prods.filter((p) => brandLabel(p.brand) === bn && (cn == null || (p.category || '') === cn)).map((p) => p.id);
+  const m = modal({ title: '🗂 الشركات والأقسام', wide: 'xwide', body: `<p class="small muted" style="margin-top:0">رتّب الشركات وأقسام كل شركة زي ما تحب — ده اللي بيظهر كفلتر في شاشة البيع (الشركة الأول وبعدين أقسامها). تقدر تضيف شركة أو قسم جديد، تغيّر الاسم (بيتغيّر على كل أصنافه)، وتنقل أصناف من قسم لقسم.</p>
+    <div class="grid" style="grid-template-columns:minmax(230px,1fr) minmax(260px,1.2fr) minmax(300px,1.6fr);gap:12px;align-items:start">
+      <div class="card"><div class="hd">الشركات</div><div class="bd" style="padding:8px"><div id="cb"></div><div class="row" style="flex-wrap:nowrap;gap:6px;margin-top:8px"><input class="in sm" id="nb" placeholder="شركة جديدة — مثال: سايبس"><button class="btn sm pri" id="ab" type="button">＋</button></div></div></div>
+      <div class="card"><div class="hd" id="ch">الأقسام</div><div class="bd" style="padding:8px"><div id="cc"></div><div class="row" style="flex-wrap:nowrap;gap:6px;margin-top:8px"><input class="in sm" id="nc" placeholder="قسم جديد — مثال: بلاستيك"><button class="btn sm pri" id="ac" type="button">＋</button></div></div></div>
+      <div class="card"><div class="hd" id="ph">الأصناف</div><div class="bd" style="padding:8px" id="cp"><div class="faint small">اختار قسم عشان تشوف أصنافه وتنقلها</div></div></div></div>`, buttons: [{ t: 'تمام' }] });
+  const mb = m.mb;
+  const rowBtns = (i, len) => `<button class="btn ghost sm" data-up="${i}" ${i ? '' : 'disabled'} title="لفوق">▲</button><button class="btn ghost sm" data-dn="${i}" ${i < len - 1 ? '' : 'disabled'} title="لتحت">▼</button><button class="btn ghost sm" data-ren="${i}" title="تغيير الاسم">✏️</button><button class="btn ghost sm" data-del="${i}" title="حذف">🗑</button>`;
+  const rowCss = (on) => `display:flex;align-items:center;gap:4px;padding:5px 8px;border-radius:8px;cursor:pointer;${on ? 'background:var(--pri-soft);font-weight:800' : ''}`;
+  const render = () => {
+    if (!tree.some((b) => b.name === sel)) sel = (tree[0] || {}).name || '';
+    const B = tree.find((b) => b.name === sel);
+    $('#cb', mb).innerHTML = tree.map((b, i) => `<div data-b="${i}" style="${rowCss(b.name === sel)}"><span style="flex:1">${esc(b.name)} <span class="cnt small faint">${b.n}</span></span>${rowBtns(i, tree.length)}</div>`).join('') || '<div class="faint small">مفيش شركات</div>';
+    $('#ch', mb).innerHTML = B ? `أقسام <b>${esc(B.name)}</b>` : 'الأقسام';
+    const cats = B ? B.cats.filter((c) => c.name) : []; const none = B ? B.cats.find((c) => !c.name) : null;
+    $('#cc', mb).innerHTML = B ? (cats.map((c, i) => `<div data-c="${i}" style="${rowCss(selCat === c.name)}"><span style="flex:1">${esc(c.name)} <span class="cnt small faint">${c.n}</span></span>${rowBtns(i, cats.length)}</div>`).join('')
+      + (none && none.n ? `<div data-c="none" style="${rowCss(selCat === '')}"><span style="flex:1" class="warn">بدون قسم <span class="cnt small">${none.n}</span></span></div>` : '') || '<div class="faint small">مفيش أقسام لسه — ضيف أول قسم</div>') : '';
+    renderProds();
+  };
+  const renderProds = () => {
+    const box = $('#cp', mb);
+    if (selCat == null) { $('#ph', mb).textContent = 'الأصناف'; box.innerHTML = '<div class="faint small">اختار قسم عشان تشوف أصنافه وتنقلها</div>'; return; }
+    const list = prods.filter((p) => brandLabel(p.brand) === sel && (p.category || '') === selCat);
+    $('#ph', mb).innerHTML = `أصناف <b>${esc(selCat || 'بدون قسم')}</b> <span class="small faint">(${list.length})</span>`;
+    const targets = tree.flatMap((b) => [...b.cats.filter((c) => c.name).map((c) => [b.name, c.name]), [b.name, '']]);
+    box.innerHTML = `<div style="position:relative;margin-bottom:8px"><input class="in sm" id="pp" placeholder="➕ ضيف صنف للقسم ده (بحث في كل الأصناف)" autocomplete="off"></div>
+      <div class="row small" style="gap:6px;margin-bottom:6px"><label class="chk"><input type="checkbox" id="pall"> الكل</label><span class="sp"></span><span id="pn" class="faint"></span></div>
+      <div style="max-height:44vh;overflow:auto;border:1px solid var(--line);border-radius:8px">${list.map((p) => `<label style="display:flex;gap:8px;align-items:center;padding:5px 8px;border-bottom:1px solid var(--line)"><input type="checkbox" data-p="${p.id}" ${chk.has(p.id) ? 'checked' : ''}><span style="flex:1">${esc(p.name)}</span><span class="small faint num">${money(p.price)}</span></label>`).join('') || '<div class="faint small" style="padding:10px">القسم فاضي — ضيف أصناف من خانة البحث</div>'}</div>
+      <div class="row" style="flex-wrap:nowrap;gap:6px;margin-top:8px"><select class="in sm" id="pt" style="flex:1"><option value="">انقل المحدد إلى…</option>${targets.filter(([b, c]) => !(b === sel && c === selCat)).map(([b, c]) => `<option value="${esc(JSON.stringify([b, c]))}">${esc(b)} ← ${esc(c || 'بدون قسم')}</option>`).join('')}</select><button class="btn sm pri" id="pmv" type="button">نقل</button></div>`;
+    const upd = () => ($('#pn', box).textContent = chk.size ? `${chk.size} محدد` : '');
+    box.onchange = (e) => { const id = +e.target.dataset.p; if (id) { e.target.checked ? chk.add(id) : chk.delete(id); upd(); } if (e.target.id === 'pall') { list.forEach((p) => (e.target.checked ? chk.add(p.id) : chk.delete(p.id))); renderProds(); } };
+    $('#pmv', box).onclick = async () => { const v = $('#pt', box).value; if (!v || !chk.size) return toast('حدد الأصناف واختار هتروح فين', 'bad'); const [b, c] = JSON.parse(v); await bulk([...chk], { brand: brandRaw(b), category: c }); toast(`اتنقل ${chk.size} صنف ✓`, 'ok'); chk.clear(); await reload(); };
+    picker($('#pp', box), { items: () => prods.filter((p) => !(brandLabel(p.brand) === sel && (p.category || '') === selCat)), match: prodMatch, label: (p) => esc(p.name), sub: (p) => `${esc(brandLabel(p.brand))} ← ${esc(p.category || 'بدون قسم')}`,
+      onPick: async (p) => { await bulk([p.id], { brand: brandRaw(sel), category: selCat }); toast(`"${p.name}" اتضاف لـ ${selCat || 'بدون قسم'} ✓`, 'ok'); await reload(); setTimeout(() => $('#pp', mb) && $('#pp', mb).focus(), 50); } });
+    upd();
+  };
+  const swap = (arr, i, j) => { [arr[i], arr[j]] = [arr[j], arr[i]]; };
+  const choose = (title, msg, opts) => new Promise((res) => { let done = false; const mm = modal({ title, body: `<p style="margin-top:0">${msg}</p><select class="in" id="chs">${opts.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join('')}</select>`, buttons: [{ t: 'تمام', cls: 'pri', fn: (b) => { done = true; res($('#chs', b).value); } }, { t: 'إلغاء', fn: () => { done = true; res(null); } }] }); new MutationObserver((_, o) => { if (!mm.el.isConnected) { o.disconnect(); if (!done) res(null); } }).observe(document.body, { childList: true }); });
+  // الشركات
+  $('#cb', mb).onclick = async (e) => {
+    const t = e.target.closest('[data-up],[data-dn],[data-ren],[data-del]'); const row = e.target.closest('[data-b]'); if (!row) return; const i = +row.dataset.b; const B = tree[i];
+    try {
+      if (!t) { sel = B.name; selCat = null; chk.clear(); return render(); }
+      if (t.dataset.up != null) { swap(tree, i, i - 1); tree.forEach((b) => (b.cfg = true)); await save(); return render(); }
+      if (t.dataset.dn != null) { swap(tree, i, i + 1); tree.forEach((b) => (b.cfg = true)); await save(); return render(); }
+      if (t.dataset.ren != null) {
+        const nn = (await promptBox('تغيير اسم الشركة', `الاسم الجديد لـ "${esc(B.name)}" — هيتغيّر على ${B.n} صنف`, B.name)); if (!nn || !nn.trim() || nn.trim() === B.name) return;
+        await bulk(idsOf(B.name), { brand: brandRaw(nn.trim()) }); const cfg = cfgOf(); const c = cfg.find((x) => x.name === B.name); if (c) c.name = nn.trim(); else cfg.push({ name: nn.trim(), cats: B.cats.filter((x) => x.name).map((x) => x.name) }); await save(cfg); sel = nn.trim(); toast('اتغيّر الاسم ✓', 'ok'); return reload();
+      }
+      if (t.dataset.del != null) {
+        if (B.n) { const to = await choose('حذف الشركة', `"${esc(B.name)}" عليها ${B.n} صنف — هينتقلوا لأنهي شركة؟ (الأصناف مش هتتمسح)`, tree.filter((b) => b.name !== B.name).map((b) => [b.name, b.name]).concat(tree.some((b) => b.name === 'أخرى') ? [] : [['أخرى', 'أخرى (من غير شركة)']])); if (to == null) return; await bulk(idsOf(B.name), { brand: brandRaw(to) }); }
+        else if (!(await confirmBox(`حذف "${esc(B.name)}" من القائمة؟`, 'حذف', 'bad'))) return;
+        await save(cfgOf().filter((x) => x.name !== B.name)); selCat = null; toast('اتحذفت ✓', 'ok'); return reload();
+      }
+    } catch (er) { toast(er.message, 'bad'); }
+  };
+  $('#ab', mb).onclick = async () => { const n = $('#nb', mb).value.trim(); if (!n) return; if (tree.some((b) => normAr(b.name) === normAr(n))) return toast('الشركة موجودة', 'bad'); await save([...cfgOf(), { name: n, cats: [] }]); sel = n; selCat = null; $('#nb', mb).value = ''; await reload(); };
+  // الأقسام
+  $('#cc', mb).onclick = async (e) => {
+    const row = e.target.closest('[data-c]'); if (!row) return; const B = tree.find((b) => b.name === sel); const cats = B.cats.filter((c) => c.name);
+    if (row.dataset.c === 'none') { selCat = ''; chk.clear(); return render(); }
+    const i = +row.dataset.c; const C = cats[i]; const t = e.target.closest('[data-up],[data-dn],[data-ren],[data-del]');
+    try {
+      if (!t) { selCat = C.name; chk.clear(); return render(); }
+      const cfg = cfgOf(); let cb = cfg.find((x) => x.name === sel); if (!cb) { cb = { name: sel, cats: cats.map((c) => c.name) }; cfg.push(cb); }
+      if (t.dataset.up != null || t.dataset.dn != null) { const j = t.dataset.up != null ? i - 1 : i + 1; cb.cats = cats.map((c) => c.name); swap(cb.cats, i, j); await save(cfg); tree = catalogTree(prods); return render(); }
+      if (t.dataset.ren != null) {
+        const nn = await promptBox('تغيير اسم القسم', `الاسم الجديد لـ "${esc(C.name)}" — هيتغيّر على ${C.n} صنف`, C.name); if (!nn || !nn.trim() || nn.trim() === C.name) return;
+        await bulk(idsOf(sel, C.name), { category: nn.trim() }); cb.cats = cats.map((c) => (c.name === C.name ? nn.trim() : c.name)); await save(cfg); if (selCat === C.name) selCat = nn.trim(); toast('اتغيّر الاسم ✓', 'ok'); return reload();
+      }
+      if (t.dataset.del != null) {
+        if (C.n) { const to = await choose('حذف القسم', `"${esc(C.name)}" فيه ${C.n} صنف — هينتقلوا لأنهي قسم؟ (الأصناف مش هتتمسح)`, [...cats.filter((c) => c.name !== C.name).map((c) => [c.name, c.name]), ['', 'بدون قسم']]); if (to == null) return; await bulk(idsOf(sel, C.name), { category: to }); }
+        else if (!(await confirmBox(`حذف قسم "${esc(C.name)}"؟`, 'حذف', 'bad'))) return;
+        cb.cats = cats.map((c) => c.name).filter((x) => x !== C.name); await save(cfg); if (selCat === C.name) selCat = null; toast('اتحذف ✓', 'ok'); return reload();
+      }
+    } catch (er) { toast(er.message, 'bad'); }
+  };
+  $('#ac', mb).onclick = async () => { const n = $('#nc', mb).value.trim(); if (!n || !sel) return; const B = tree.find((b) => b.name === sel); if (B.cats.some((c) => normAr(c.name) === normAr(n))) return toast('القسم موجود', 'bad'); const cfg = cfgOf(); let cb = cfg.find((x) => x.name === sel); if (!cb) cfg.push((cb = { name: sel, cats: [] })); cb.cats.push(n); await save(cfg); selCat = n; $('#nc', mb).value = ''; await reload(); };
+  $('#nb', mb).onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); $('#ab', mb).click(); } };
+  $('#nc', mb).onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); $('#ac', mb).click(); } };
+  new MutationObserver((_, o) => { if (!m.el.isConnected) { o.disconnect(); onDone && onDone(); } }).observe(document.body, { childList: true });
+  render();
+}
 const catSuggestions = (list) => [...new Set([...(list || S.cache['p' + curBranch()] || []).map((x) => x.category).filter(Boolean), ...EXTRA_CATS])];
 const brandSuggestions = (list) => [...new Set([...(list || S.cache['p' + curBranch()] || []).map((x) => x.brand).filter(Boolean), 'جوتن', 'باكين', 'سايبس', 'سكيب', 'جي إل سي', 'ناشونال', 'كابسي', 'توب'])];
 
@@ -1920,6 +2022,11 @@ function productForm(p, onSave, list) {
     ],
   });
   // القارئ بيضغط Enter بعد الباركود: ننقل للخانة اللي بعدها بدل ما النافذة تتحفظ ناقصة
+  // الشركة ← اقتراحات الأقسام بتاعتها بس (من "الشركات والأقسام")
+  { const tr = catalogTree(list || S.cache['p' + curBranch()] || []); const bIn = $('[name=brand]', pm.mb);
+    const dlb = $('#dlb', pm.mb); if (dlb) dlb.innerHTML = [...new Set([...tr.map((b) => b.name).filter((x) => x !== 'أخرى'), ...brandSuggestions(list)])].map((c) => `<option value="${esc(c)}">`).join('');
+    const fillCats = () => { const b = bIn.value.trim() && tr.find((x) => x.name === brandLabel(bIn.value)); $('#dlc', pm.mb).innerHTML = (b ? b.cats.filter((c) => c.name).map((c) => c.name) : cats).map((c) => `<option value="${esc(c)}">`).join(''); };
+    bIn.addEventListener('input', fillCats); fillCats(); }
   // باركود عادي أو QR — القارئ شغّال من أي مكان في النافذة
   const bi = $('[name=barcode]', pm.mb);
   const hint = document.createElement('div'); hint.className = 'small faint'; hint.style.marginTop = '4px'; hint.textContent = '🔫 القارئ شغّال — امسح الباركود أو الـ QR من أي مكان في النافذة'; bi.after(hint);
@@ -3455,6 +3562,7 @@ VIEWS.settings = async (el) => {
       <div class="field"><label class="f">التليفون</label><input class="in" name="phone" value="${esc(b.phone)}" dir="ltr"></div><div class="field"><label class="f">مقاس الطباعة الافتراضي</label><select class="in" name="print_format">${opt('thermal', 'إيصال حراري 80مم', b.print_format)}${opt('a4', 'ورقة A4', b.print_format)}</select></div></div>
       <div class="field"><label class="f">العنوان</label><input class="in" name="address" value="${esc(b.address)}"></div><div class="field"><label class="f">تذييل الفاتورة</label><input class="in" name="receipt_footer" value="${esc(b.receipt_footer)}"></div>
       <button class="btn pri" data-save="${b.id}">حفظ</button></div></div>`).join('')}</div>
+    <div class="card" style="margin-bottom:16px"><div class="hd">🗂 الشركات والأقسام</div><div class="bd row" style="gap:12px;flex-wrap:wrap"><span class="muted" style="flex:1;min-width:220px">ضيف الشركات (جوتن، باكين، أي شركة) ورتّب أقسام كل شركة والأصناف اللي جواها — ده اللي بيظهر كفلتر في شاشة البيع.</span><button class="btn pri" id="catbtn">🗂 إدارة الشركات والأقسام</button></div></div>
     <div class="card" style="margin-bottom:16px"><div class="hd">🖼 لوجو الفاتورة</div><div class="bd row" style="gap:12px;flex-wrap:wrap"><span class="muted" style="flex:1;min-width:220px">حط لوجو الشركة أو لوجو مخصوص لكل معرض فوق فاتورة البيع (الحرارية و A4) وعرض السعر — ومعاه لوجوهات التوكيلات (جوتن، باكين…) لو حابب.</span><span id="ilst" class="small"></span><button class="btn pri" id="ilbtn">🖼 إعداد لوجو الفاتورة</button></div></div>
     <div class="card" style="margin-bottom:16px"><div class="hd">📹 الكاميرات</div><div class="bd" id="camset">
       <p class="muted" style="margin-top:0">من أي عملية في الحركة المباشرة أو أي فاتورة دوس <b>🎥</b> يطلعلك الوقت بالظبط عشان تراجعه في تسجيل الكاميرات. الرابط اختياري: لو حطيته، زرار "افتح الكاميرات" هيفتحه على طول (صفحة جهاز التسجيل أو رابط التطبيق).</p>
@@ -3498,6 +3606,7 @@ VIEWS.settings = async (el) => {
   }));
   const ilState = async () => { const c = await invLogo(true); $('#ilst', el).innerHTML = c.on ? '<span class="badge ok">شغّال</span>' : '<span class="badge">مقفول</span>'; };
   ilState(); $('#ilbtn', el).onclick = () => invoiceLogoForm(brs, ilState);
+  $('#catbtn', el).onclick = () => catalogManager();
   $('#camsave', el).onclick = async () => {
     const cameras = {}; $$('[data-cam]', el).forEach((box) => { cameras[box.dataset.cam] = { url: $('[name=url]', box).value.trim(), name: $('[name=name]', box).value.trim(), offset: +$('[name=offset]', box).value || 0 }; });
     try { await PUT('/api/settings', { cameras }); const me = await GET('/api/me'); S.settings = me.settings; toast('تم حفظ إعدادات الكاميرات', 'ok'); route(); } catch (e) { toast(e.message, 'bad'); }
