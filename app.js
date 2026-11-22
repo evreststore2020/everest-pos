@@ -915,7 +915,7 @@ function renderShell() {
   const company = S.settings.company_name || 'برنامج الكاشير';
   if (isCashierMode()) return renderCashierShell();
   // ===== المدير العام: قائمة جانبية كاملة =====
-  const seg = `<div class="seg" id="brseg"><button data-b="0" class="${!S.branch ? 'on' : ''}">كل المعارض</button>${S.branches.map((b) => `<button data-b="${b.id}" class="${S.branch === b.id ? 'on' : ''}"><span class="dot" style="background:${esc(b.color)}"></span>${esc(b.name)}</button>`).join('')}</div>`;
+  const seg = S.branches.length < 2 ? '' : `<div class="seg" id="brseg"><button data-b="0" class="${!S.branch ? 'on' : ''}">كل المعارض</button>${S.branches.map((b) => `<button data-b="${b.id}" class="${S.branch === b.id ? 'on' : ''}"><span class="dot" style="background:${esc(b.color)}"></span>${esc(b.name)}</button>`).join('')}</div>`;
   $('#app').innerHTML = `<div class="shell"><aside class="side" id="side"><div class="brand"><span class="logo">${icon('roller')}</span><div><b>${esc(company)}</b><span>لوحة المدير العام</span></div></div>
     <nav>${NAV.filter(navOk).map((n) => (n.grp ? `<div class="grp">${n.grp}</div>` : `<a href="#/${n.id}" data-v="${n.id}">${icon(n.i)}${n.t}</a>`)).join('').replace(/<div class="grp">[^<]*<\/div>(?=<div class="grp">|$)/g, '')}</nav>
     <div class="me"><div class="row" style="flex-wrap:nowrap;gap:10px"><span class="avatar">${esc(initial(u.name))}</span><div style="min-width:0"><div style="color:#fff;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(u.name)}</div><div style="color:#7c8aa5">المدير العام · كل المعارض</div></div></div>
@@ -933,7 +933,7 @@ function renderShell() {
 function renderCashierShell() {
   const u = S.user; const b = branchOf(curBranch());
   // المدير لما يفتح شاشة الكاشير: يختار المعرض من فوق
-  const adminSeg = isAdmin() ? `<div class="seg dark" id="brseg">${S.branches.map((x) => `<button data-b="${x.id}" class="${S.branch === x.id ? 'on' : ''}"><span class="dot" style="background:${esc(x.color)}"></span>${esc(x.name)}</button>`).join('')}</div>` : '';
+  const adminSeg = isAdmin() && S.branches.length > 1 ? `<div class="seg dark" id="brseg">${S.branches.map((x) => `<button data-b="${x.id}" class="${S.branch === x.id ? 'on' : ''}"><span class="dot" style="background:${esc(x.color)}"></span>${esc(x.name)}</button>`).join('')}</div>` : '';
   $('#app').innerHTML = `<div class="cshell"><header class="ctop">
       <div class="cbrand"><span class="logo" style="background:linear-gradient(135deg,${esc(b.color || '#3b82f6')},#1e3a8a)">${icon('roller')}</span><div><b>${esc(b.name || '')}</b><span>${esc(S.settings.company_name || '')}</span></div></div>
       <nav class="ctabs">${cashierNav().map((n) => `<a href="#/${n.id}" data-v="${n.id}">${icon(n.i)}${navTitle(n)}</a>`).join('')}</nav>
@@ -992,6 +992,7 @@ async function boot() {
     const me = await GET('/api/me');
     S.user = me.user; S.branches = me.branches; S.settings = me.settings; S.methods = me.methods; S.allMethods = me.all_methods;
     if (isAdmin() && S.branch && !S.branches.some((b) => b.id === S.branch)) S.branch = 0;
+    if (isAdmin() && S.branches.length === 1) { S.branch = S.branches[0].id; LS.set('pos_branch', S.branch); } // معرض واحد بس: نشتغل عليه على طول
     // الشاشتين منفصلين: الكاشير على شاشة الكاشير بس، والمدير على لوحة الإدارة بس
     if (isAdmin() && S.mode === 'cashier') { S.user = null; if (SB) LS.set(tokKey(), null); applyTheme(); return renderLogin('حساب المدير بيدخل من لوحة الإدارة بس — الشاشة دي للكاشير'); }
     if (!isAdmin()) goMode('cashier', true); else if (!S.mode) goMode('admin', true);
