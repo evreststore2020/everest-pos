@@ -782,7 +782,10 @@ const pathMode = () => (/^cashier/.test(relPath()) ? 'cashier' : /^admin/.test(r
 S.mode = pathMode();
 const isCashierMode = () => !isAdmin() || S.mode === 'cashier';
 function goMode(m, replace) { S.mode = m; const p = BASE + (m ? m + '/' : ''); if (location.pathname !== p) history[replace ? 'replaceState' : 'pushState']({}, '', p + location.hash); }
-window.addEventListener('popstate', () => { S.mode = pathMode(); if (S.user) { renderShell(); route(); } else renderLogin(); });
+// فتح الرابط الرئيسي وانت داخل قبل كده: نكمّل على نفس الشاشة من غير ما يطلب الباسورد تاني
+if (!S.mode) { const has = (k) => { try { return !!JSON.parse(localStorage.getItem(k) || 'null'); } catch { return false; } }; if (has('pos_token_admin')) goMode('admin', true); else if (has('pos_token_cashier')) goMode('cashier', true); }
+// زرار الرجوع (خصوصاً في الموبايل) لحد الرابط الرئيسي: نفضل في نفس الشاشة بدل ما يخرج
+window.addEventListener('popstate', () => { const pm = pathMode(); if (!pm && S.user) { goMode(S.mode || (isAdmin() ? 'admin' : 'cashier'), true); renderShell(); route(); return; } S.mode = pm; if (S.user) { renderShell(); route(); } else renderLogin(); });
 /* ---------- توقيع الشركة المنفّذة: داش ---------- */
 const DASH_MARK = (h = 28, one = '#6c5ce7', two = '#ff5c4d') => `<svg viewBox="0 0 64 48" height="${h}" aria-hidden="true" style="display:block;flex:none"><path d="M18 0h14L14 48H0z" fill="${one}"/><path d="M42 0h14L38 48H24z" fill="${two}"/></svg>`;
 const DASH_WORD = (dark) => `<span dir="ltr" style="font:800 1.25em/1 ui-monospace,Consolas,'Courier New',monospace;letter-spacing:-.5px"><span style="color:#6c5ce7">D</span><span style="color:${dark ? '#fff' : '#14141f'}">a</span><span style="color:#6c5ce7">S</span><span style="color:${dark ? '#fff' : '#14141f'}">h</span></span>`;
