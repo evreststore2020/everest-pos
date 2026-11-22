@@ -2465,8 +2465,17 @@ const r3 = (x) => Math.round((+x || 0) * 1000) / 1000;
 VIEWS.stock = async (el) => {
   if (!needBranch(el)) return;
   const prods = await products(true);
-  const counted = {};
-  el.innerHTML = `<div class="card" style="padding:12px 16px;margin-bottom:14px"><b>الجرد الفعلي:</b> <span class="muted">اكتب الكمية الموجودة فعلاً على الرف لكل صنف (سيب الخانة فاضية لو مفيش تغيير). الفرق بيتسجل كعجز أو زيادة مخزون في الأرباح والخسائر.</span></div>
+  // الجرد بيتحفظ على الجهاز وانت شغال (لو الصفحة اتقفلت أو النت فصل مايضيعش)
+  const dKey = 'pos_stock_draft_' + curBranch();
+  const counted = LS.get(dKey, {}) || {}; for (const k of Object.keys(counted)) if (!prods.some((p) => p.id === +k)) delete counted[k];
+  const keep = () => LS.set(dKey, counted);
+  let last = null; const hist = [];
+  el.innerHTML = `<div class="card" style="padding:12px 16px;margin-bottom:14px;border-color:var(--pri);background:var(--pri-soft)">
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center"><b style="font-size:15px">🔫 جرد بالباركود</b><span class="small muted">امسح العبوات واحدة واحدة — كل مسحة بتتحسب</span><span class="sp"></span>
+        <select class="in sm" id="smode" style="width:auto">${opt('one', 'كل مسحة = +1 قطعة')}${opt('pack', 'كل مسحة = +1 كرتونة (لو الصنف ليه كرتونة)')}${opt('ask', 'امسح ← اكتب الكمية')}</select></div>
+      <div class="row" style="flex-wrap:nowrap;gap:6px;margin-top:8px"><input class="in" id="scn" placeholder="امسح الباركود هنا (أو اكتب الكود واضغط Enter)" autocomplete="off" dir="auto" style="font-size:16px;flex:1">${camBtn('scam2', 'font-size:18px')}<button class="btn" id="sundo" type="button" title="شيل آخر مسحة">↩ تراجع</button></div>
+      <div id="slast" style="margin-top:8px;min-height:26px"></div></div>
+    <div class="card" style="padding:12px 16px;margin-bottom:14px"><b>الجرد الفعلي:</b> <span class="muted">اكتب الكمية الموجودة فعلاً على الرف لكل صنف (سيب الخانة فاضية لو مفيش تغيير). الفرق بيتسجل كعجز أو زيادة مخزون في الأرباح والخسائر.</span></div>
     <div class="toolbar"><input class="in" id="sq" placeholder="بحث" style="width:240px"><label class="chk"><input type="checkbox" id="sch"> المعدّل فقط</label><button class="btn" id="xdl" title="شيت Excel فيه كل أصناف المعرض — املا عمود الكمية الفعلية">${icon('download')}شيت الجرد (Excel)</button><button class="btn" id="xup" title="ارفع الشيت بعد ما تملاه">📥 استيراد من Excel</button><input type="file" id="xfile" accept=".xlsx,.xls,.csv" hidden><span class="sp"></span><input class="in" id="sn" placeholder="ملاحظات الجرد" style="width:220px"><button class="btn pri" id="ssave">حفظ الجرد</button></div><div id="stb"></div>`;
   $('#xdl', el).onclick = async () => { try { await stockSheetDownload(prods); toast('اتنزّل الشيت — املا عمود "الكمية الفعلية" وارفعه', 'ok'); } catch (e) { toast(e.message, 'bad'); } };
   $('#xup', el).onclick = () => $('#xfile', el).click();
@@ -2504,11 +2513,41 @@ VIEWS.stock = async (el) => {
   });
   $('#stb', el).addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('[data-id]')) { e.preventDefault(); const all = $$('[data-id]', el); const i = all.indexOf(e.target); if (all[i + 1]) all[i + 1].focus(); } });
   $('#sq', el).oninput = debounce(render, 150); $('#sch', el).onchange = render;
+  $('#stb', el).addEventListener('input', keep);
+  // ===== الجرد بالباركود =====
+  const showLast = (p, extra) => {
+    if (!p) { $('#slast', el).innerHTML = ''; return; }
+    const c = counted[p.id] ?? 0; const d = r2(c - p.stock); const k = packOf(p);
+    $('#slast', el).innerHTML = `<div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px"><b>${esc(p.name)}</b><span class="sp"></span>
+      <span>الفعلي: <b class="num" style="font-size:20px">${qf(c)}</b>${k && c >= k.n ? ` <span class="small faint">(${esc(packText(p, c))})</span>` : ''}</span><span class="small faint">بالدفتر ${qf(p.stock)}</span><b class="num ${d < 0 ? 'bad' : d > 0 ? 'ok' : ''}">${d > 0 ? '+' : ''}${qf(d)}</b>${extra || ''}</div>`;
+  };
+  const addCount = (p, n) => { hist.push([p.id, counted[p.id]]); counted[p.id] = r2((counted[p.id] ?? 0) + n); last = p; keep(); $('#sch', el).checked = true; render(); showLast(p); };
+  const askQty = (p) => {
+    last = p; showLast(p, `<input class="in sm" id="sqty" type="number" step="any" min="0" placeholder="الكمية" value="${counted[p.id] ?? ''}" style="width:110px"><button class="btn sm pri" id="sqok" type="button">تمام</button>`);
+    const inp = $('#sqty', el); inp.focus(); inp.select();
+    const done = () => { if (inp.value === '') return; hist.push([p.id, counted[p.id]]); counted[p.id] = r2(+inp.value); keep(); $('#sch', el).checked = true; render(); showLast(p); $('#scn', el).focus(); };
+    inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); done(); } }; $('#sqok', el).onclick = done;
+  };
+  const takeScan = (raw) => {
+    const q = String(raw || '').trim(); if (!q) return;
+    const p = prods.find((x) => prodExact(x, q));
+    if (!p) { beepBad(); if (can('products')) linkBarcode(q, prods, (lp) => takeScan(lp.barcode || lp.code)); else toast(`مفيش صنف بالكود ${codeFromScan(q)}`, 'bad'); return; }
+    beepOk(); const mode = $('#smode', el).value;
+    if (mode === 'ask') return askQty(p);
+    const k = packOf(p); addCount(p, mode === 'pack' && k ? k.n : 1);
+  };
+  const scn = $('#scn', el); let sFin = null;
+  // الـ QR ممكن يكون كذا سطر: نستنى لحظة بعد Enter
+  scn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); scn.value += ' '; clearTimeout(sFin); sFin = setTimeout(() => { const v = scn.value; scn.value = ''; takeScan(v); }, 120); } else if (sFin && e.key.length === 1) { clearTimeout(sFin); sFin = null; } });
+  $('#sundo', el).onclick = () => { const h = hist.pop(); if (!h) return toast('مفيش حاجة ترجعها', 'warn'); const [id, prev] = h; if (prev == null) delete counted[id]; else counted[id] = prev; keep(); render(); showLast(prods.find((x) => x.id === id)); scn.focus(); };
+  if ($('#scam2', el)) $('#scam2', el).onclick = () => camScan((code) => { const p = prods.find((x) => prodExact(x, code)); if (!p) { toast(`مفيش صنف بالكود ${codeFromScan(code)}`, 'bad'); return true; } const mode = $('#smode', el).value; if (mode === 'ask') { setTimeout(() => askQty(p), 50); return false; } const k = packOf(p); addCount(p, mode === 'pack' && k ? k.n : 1); toast(`${p.name}: ${qf(counted[p.id])}`, 'ok'); return true; }, { multi: true, title: '📷 جرد بالكاميرا' });
+  if (Object.keys(counted).length) { $('#sch', el).checked = true; toast(`رجعنا الجرد اللي كان شغال (${Object.keys(counted).length} صنف) — كمّل أو احفظ`, 'ok'); }
+  setTimeout(() => scn.focus(), 60);
   $('#ssave', el).onclick = async () => {
     const items = Object.entries(counted).map(([id, qty]) => ({ product_id: +id, qty })).filter((x) => { const p = prods.find((y) => y.id === x.product_id); return p && r2(x.qty - p.stock) !== 0; });
     if (!items.length) return toast('مفيش فروقات للحفظ', 'bad');
     if (!(await confirmBox(`حفظ تسوية ${items.length} صنف؟`))) return;
-    try { const r = await POST('/api/stock/adjust', { branch_id: curBranch(), items, notes: $('#sn', el).value }); toast(`تم تسوية ${r.adjusted} صنف`, 'ok'); dropCache(); route(); } catch (e) { toast(e.message, 'bad'); }
+    try { const r = await POST('/api/stock/adjust', { branch_id: curBranch(), items, notes: $('#sn', el).value }); toast(`تم تسوية ${r.adjusted} صنف`, 'ok'); LS.set(dKey, null); dropCache(); route(); } catch (e) { toast(e.message, 'bad'); }
   };
   render();
 };
