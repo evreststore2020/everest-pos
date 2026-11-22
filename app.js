@@ -366,14 +366,28 @@ const normAr = (s) => String(s ?? '').toLowerCase().replace(/[ً-ٰٟـ]/g, '').
   .replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/(\d)[,٫](\d)/g, '$1.$2')
   .replace(/(?<!\d)\.|\.(?!\d)/g, ' ').replace(/[—–\-_()[\]{},،/\\:;'"|+*#×]+/g, ' ').replace(/\s+/g, ' ').trim();
 const smartMatch = (text, q) => { const w = normAr(q).split(' ').filter(Boolean); if (!w.length) return true; const t = ' ' + normAr(text) + ' '; return w.every((x) => t.includes(x)); };
-const prodMatch = (p, q) => String(p.code || '').toLowerCase().startsWith(String(q).trim().toLowerCase()) || (p.barcode && String(p.barcode).includes(String(q).trim())) || smartMatch(`${p.name} ${p.code || ''} ${p.category || ''} ${p.brand || ''}`, q);
+const prodMatch = (p, q) => String(p.code || '').toLowerCase().startsWith(String(q).trim().toLowerCase()) || (p.barcode && (String(p.barcode).includes(String(q).trim()) || (String(q).trim().length >= 6 && sameCode(p.barcode, q)))) || smartMatch(`${p.name} ${p.code || ''} ${p.category || ''} ${p.brand || ''}`, q);
 const partyMatch = (c, q) => smartMatch(`${c.name} ${c.phone || ''}`, q) || String(c.phone || '').replace(/\D/g, '').includes(String(q).replace(/\D/g, '') || '~');
 // قارئ الباركود بيكتب زي الكيبورد: نصلّح الأرقام العربي، والحروف لو الكيبورد كان على عربي، والأصفار في الأول
 const AR_KEYS = { 'ض': 'q', 'ص': 'w', 'ث': 'e', 'ق': 'r', 'ف': 't', 'غ': 'y', 'ع': 'u', 'ه': 'i', 'خ': 'o', 'ح': 'p', 'ش': 'a', 'س': 's', 'ي': 'd', 'ب': 'f', 'ل': 'g', 'ا': 'h', 'ت': 'j', 'ن': 'k', 'م': 'l', 'ئ': 'z', 'ء': 'x', 'ؤ': 'c', 'ر': 'v', 'ى': 'n', 'ة': 'm', 'ز': '.', 'و': ',', 'ك': ';', 'ط': "'", 'ظ': '/' };
 const scanNorm = (s) => String(s ?? '').trim().replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/لا/g, 'b').replace(/[؀-ۿ]/g, (c) => AR_KEYS[c] ?? c);
-const sameCode = (a, b) => { a = scanNorm(a).toLowerCase(); b = scanNorm(b).toLowerCase(); if (!a || !b) return false; return a === b || (/^\d+$/.test(a) && /^\d+$/.test(b) && a.replace(/^0+/, '') === b.replace(/^0+/, '')); };
+// QR كود: بنطلّع منه رقم المنتج (GTIN) لو موجود — عشان يطابق الباركود العادي اللي على نفس العبوة
+//  • رابط GS1 زي https://id.gs1.org/01/06281234567890/10/ABC  ← 6281234567890
+//  • نص GS1 زي (01)06281234567890(17)270101 أو 0106281234567890172701…  ← 6281234567890
+//  • أي رابط تاني: من غير https:// و www، وآخر 60 حرف لو طويل
+const codeFromScan = (raw) => {
+  let s = scanNorm(raw).replace(/[\x00-\x1f]/g, ' ').replace(/\s+/g, ' ').trim().replace(/^\][A-Za-z]\d/, '');
+  const gt = (g) => (g.length === 14 && g[0] === '0' ? g.slice(1) : g);
+  const t = s.replace(/\s+/g, ''); // لو القارئ قسم الكود على كذا سطر
+  let m = t.match(/\/01\/(\d{8,14})(?:[/?#]|$)/); if (m) return gt(m[1]);
+  m = t.match(/^\(01\)(\d{14})/) || (t.length >= 16 && /^\d/.test(t) && t.match(/^01(\d{14})/)); if (m) return gt(m[1]);
+  if (/^https?:\/\//i.test(s)) { s = s.replace(/^https?:\/\/(www\.)?/i, '').replace(/\/$/, ''); }
+  return s.length > 60 ? s.slice(-60) : s;
+};
+const isQrText = (raw) => { const s = scanNorm(raw); return /^https?:\/\//i.test(s) || /\/01\/\d{8}/.test(s) || /^\(01\)/.test(s) || /\s/.test(s.trim()) || s.length > 30; };
+const sameCode = (a, b) => { a = codeFromScan(a).toLowerCase(); b = codeFromScan(b).toLowerCase(); if (!a || !b) return false; return a === b || (/^\d+$/.test(a) && /^\d+$/.test(b) && a.replace(/^0+/, '') === b.replace(/^0+/, '')); };
 const prodExact = (p, q) => (p.barcode && sameCode(p.barcode, q)) || sameCode(p.code, q);
-const looksLikeBarcode = (q) => /^[0-9a-z\-]{6,}$/i.test(scanNorm(q)) && /\d{4,}/.test(scanNorm(q));
+const looksLikeBarcode = (q) => (/^[0-9a-z\-]{6,}$/i.test(codeFromScan(q)) && /\d{4,}/.test(codeFromScan(q))) || isQrText(q);
 /* ---------- التلوين: كتالوج أكواد الألوان + نافذة كود اللون وسعر التلوين ---------- */
 async function colorsList(force) { if (force || !S.colors) S.colors = await GET('/api/colors').catch(() => []); return S.colors; }
 const colorLabel = (c) => `${c.code}${c.name ? ' ' + c.name : ''}`;
@@ -412,7 +426,7 @@ function tintModal(p, basePrice, onDone) {
 }
 // باركود مش متسجل: نربطه بصنف (مرة واحدة وبعد كده بيتعرف لوحده)
 function linkBarcode(code, prods, onLinked) {
-  code = scanNorm(code);
+  code = codeFromScan(code);
   if (!can('products')) return toast(`الباركود ${code} مش متسجل على أي صنف — اطلب من المدير يربطه من "الأصناف والأسعار"`, 'bad');
   let chosen = null;
   const m = modal({ title: 'باركود جديد — اربطه بصنف', body: `<p style="margin-top:0">الباركود <b class="num" dir="ltr">${esc(code)}</b> مش متسجل على أي صنف. اختار الصنف بتاعه، وبعد كده لما تمسحه هيتعرف لوحده.</p>
@@ -1277,22 +1291,26 @@ VIEWS.pos = async (el) => {
     if (looksLikeBarcode(q)) { beepBad(); linkBarcode(q, prods, (p) => { add(p); ps.focus(); }); return true; }
     return false;
   };
+  // Enter: نستنى لحظة صغيرة — الـ QR ممكن يكون كذا سطر والقارئ بيبعت Enter بينهم
+  let psFin = null;
+  const psRun = () => {
+    psFin = null; const q = ps.value.trim(); if (!q) return;
+    if (takeCode(q)) { ps.value = ''; renderGrid(); return; }
+    const list = visible();
+    if (list.length && !isQrText(q)) { add(list[0]); ps.value = ''; renderGrid(); } else { toast('مفيش صنف بالكود/الباركود ده', 'bad'); ps.select(); }
+  };
   ps.onkeydown = (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const q = ps.value.trim(); if (!q) return;
-      if (takeCode(q)) { ps.value = ''; renderGrid(); return; }
-      const list = visible();
-      if (list.length) { add(list[0]); ps.value = ''; renderGrid(); } else toast('مفيش صنف بالكود/الباركود ده', 'bad');
-    } else if (e.key === 'Escape') { ps.value = ''; renderGrid(); }
+    if (e.key === 'Enter') { e.preventDefault(); if (!ps.value.trim()) return; clearTimeout(psFin); ps.value += ' '; psFin = setTimeout(psRun, 120); }
+    else if (e.key === 'Escape') { ps.value = ''; renderGrid(); }
+    else if (psFin && e.key.length === 1) { clearTimeout(psFin); psFin = null; }
   };
   // المسح وانت مش واقف في خانة البحث (دوست على صنف أو زرار): القارئ بيكتب بسرعة جداً وبعدين Enter
   const scan = { buf: '', last: 0 };
   S.posScan = (e) => {
     const t = e.target; if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
     const now = Date.now();
-    if (e.key === 'Enter') { if (scan.buf.length >= 3 && now - scan.last < 150) { e.preventDefault(); const q = scan.buf; scan.buf = ''; if (!takeCode(q)) toast(`مفيش صنف بالكود/الباركود ${scanNorm(q)}`, 'bad'); ps.focus(); } scan.buf = ''; return; }
-    if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) { if (now - scan.last > 150) scan.buf = ''; scan.buf += e.key; scan.last = now; }
+    if (e.key === 'Enter') { if (scan.buf.length >= 3 && now - scan.last < 150) { e.preventDefault(); scan.buf += ' '; scan.last = now; clearTimeout(scan.timer); scan.timer = setTimeout(() => { const q = scan.buf.trim(); scan.buf = ''; if (!takeCode(q)) toast(`مفيش صنف بالكود/الباركود ${codeFromScan(q)}`, 'bad'); ps.focus(); }, 120); } else scan.buf = ''; return; }
+    if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) { clearTimeout(scan.timer); if (now - scan.last > 150) scan.buf = ''; scan.buf += e.key; scan.last = now; }
   };
   $('#filters', el).onclick = (e) => {
     const b = e.target.closest('[data-b]'); if (b) { st.brand = b.dataset.b; st.cat = ''; renderFilters(); renderGrid(); return; }
@@ -1739,9 +1757,38 @@ function productForm(p, onSave, list) {
     ],
   });
   // القارئ بيضغط Enter بعد الباركود: ننقل للخانة اللي بعدها بدل ما النافذة تتحفظ ناقصة
+  // باركود عادي أو QR — القارئ شغّال من أي مكان في النافذة
   const bi = $('[name=barcode]', pm.mb);
-  bi.addEventListener('keydown', (e) => { if (e.key !== 'Enter') return; e.preventDefault(); e.stopPropagation(); bi.value = scanNorm(bi.value); const dup = (list || S.cache['p' + curBranch()] || []).find((x) => x.id !== p.id && x.barcode && sameCode(x.barcode, bi.value)); if (dup) toast(`الباركود ده متسجل على "${dup.name}"`, 'warn'); else beepOk(); $('[name=category]', pm.mb).focus(); });
-  bi.addEventListener('change', () => { bi.value = scanNorm(bi.value); });
+  const hint = document.createElement('div'); hint.className = 'small faint'; hint.style.marginTop = '4px'; hint.textContent = '🔫 القارئ شغّال — امسح الباركود أو الـ QR من أي مكان في النافذة'; bi.after(hint);
+  let fin = null;
+  const finish = () => {
+    fin = null; const raw = bi.value; if (!raw.trim()) return;
+    const code = codeFromScan(raw); bi.value = code;
+    const qr = isQrText(raw) && code !== scanNorm(raw).trim();
+    const dup = (list || S.cache['p' + curBranch()] || []).find((x) => x.id !== p.id && x.barcode && sameCode(x.barcode, code));
+    hint.innerHTML = dup ? `<span class="warn">⚠️ الكود ده متسجل على "${esc(dup.name)}"${qr ? ' — الـ QR ده غالباً واحد لكل منتجات الشركة، امسح الباركود العادي اللي على العبوة بداله' : ''}</span>`
+      : qr ? `<span class="ok">✓ اتقرا من QR</span> <span class="faint" dir="ltr">${esc(scanNorm(raw).trim().slice(0, 70))}${scanNorm(raw).trim().length > 70 ? '…' : ''}</span>` : '<span class="ok">✓ اتقرا الباركود</span>';
+    dup ? beepBad() : beepOk(); $('[name=category]', pm.mb).focus();
+  };
+  // الـ QR ممكن يكون كذا سطر (القارئ بيبعت Enter بينهم): نستنى لحظة قبل ما نقفل
+  bi.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); bi.value += ' '; clearTimeout(fin); fin = setTimeout(finish, 160); return; }
+    if (fin && e.key.length === 1) { clearTimeout(fin); fin = null; }
+  });
+  bi.addEventListener('change', () => { if (!fin) bi.value = codeFromScan(bi.value); });
+  // لو المؤشر في خانة تانية والقارئ كتب (حروف سريعة جداً + Enter) ← ننقل اللي اتكتب لخانة الباركود ونرجّع الخانة زي ما كانت
+  let burst = { t: 0, s: '', el: null, v0: '' };
+  pm.mb.addEventListener('keydown', (e) => {
+    const now = performance.now();
+    if (e.target === bi) return;
+    if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) { if (now - burst.t > 50) burst = { t: now, s: '', el: e.target, v0: e.target.value ?? '' }; burst.s += e.key; burst.t = now; return; }
+    if (e.key === 'Enter' && burst.s.length >= 6 && now - burst.t < 80 && burst.el) {
+      e.preventDefault(); e.stopPropagation();
+      const el = burst.el, v0 = burst.v0, s = burst.s; burst = { t: 0, s: '' };
+      if (/^(INPUT|TEXTAREA)$/.test(el.tagName) && el.type !== 'checkbox') setTimeout(() => { el.value = v0; }, 0);
+      bi.value = s + ' '; bi.focus(); clearTimeout(fin); fin = setTimeout(finish, 160);
+    }
+  }, true);
 }
 /* كارت الصنف: كل حركة (بيع / شراء / مرتجع / جرد) برقم المستند والعميل أو المورد والرصيد بعدها */
 const MOVE_T = { sale: ['بيع', 'pri'], return: ['مرتجع بيع', 'warn'], purchase: ['شراء', 'ok'], purchase_return: ['مرتجع شراء', 'bad'], adjust: ['جرد / تسوية', ''], opening: ['رصيد أول المدة', ''] };
