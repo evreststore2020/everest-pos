@@ -1785,9 +1785,38 @@ VIEWS.products = async (el) => {
   if ($('#prp', el)) $('#prp', el).onclick = () => { if (!curBranch()) return toast('اختار المعرض من فوق الأول', 'bad'); repriceModal(all, load); };
   if ($('#pcol', el)) $('#pcol', el).onclick = () => colorsCatalog();
   if ($('#pcat', el)) $('#pcat', el).onclick = () => catalogManager(() => route());
-  $('#pprn', el).onclick = () => printReport('قائمة الأسعار', `${rows.length} صنف`, tableHTML([{ t: 'الكود', k: 'code' }, { t: 'الصنف', k: 'name' }, { t: 'التصنيف', k: 'category' }, { t: 'السعر', n: 1, f: (r) => money(r.price) }], rows));
+  $('#pprn', el).onclick = () => priceListPrint(all.filter((p) => p.active));
   await load();
 };
+/* ---------- طباعة قائمة الأسعار: كل شركة لوحدها (في صفحة جديدة) ومقسّمة بأقسامها ---------- */
+function priceListPrint(list) {
+  const tree = catalogTree(list).filter((b) => b.n > 0);
+  if (!tree.length) return toast('مفيش أصناف', 'bad');
+  const m = modal({ title: '🖨 طباعة قائمة الأسعار', body: `
+    <div class="field"><label class="f">الشركات اللي هتتطبع <span class="faint">(كل شركة بتبدأ في صفحة لوحدها)</span></label>
+      <div id="plb" style="display:flex;flex-direction:column;gap:4px;max-height:34vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px">${tree.map((b, i) => `<label class="chk"><input type="checkbox" data-i="${i}" checked> <b>${esc(b.name)}</b> <span class="small faint">${b.n} صنف · ${b.cats.filter((c) => c.name).length} قسم</span></label>`).join('')}</div>
+      <div class="row small" style="gap:10px;margin-top:4px"><a href="#" id="pla">تحديد الكل</a><a href="#" id="pln">شيل الكل</a></div></div>
+    <label class="chk field"><input type="checkbox" id="plc" checked> مقسّمة بالأقسام (عنوان لكل قسم)</label>
+    <label class="chk field"><input type="checkbox" id="plw"> عمود سعر الجملة كمان</label>
+    <label class="chk field"><input type="checkbox" id="plk" checked> عمود الكود</label>`,
+    buttons: [{ t: `${icon('print')} طباعة`, cls: 'pri', fn: (mb) => {
+      const pick = $$('#plb input:checked', mb).map((x) => tree[+x.dataset.i]); if (!pick.length) throw new Error('اختار شركة واحدة على الأقل');
+      const byCat = $('#plc', mb).checked, wh = $('#plw', mb).checked, code = $('#plk', mb).checked;
+      const b = branchOf(curBranch()) || {}; const company = S.settings.company_name || ''; const today = new Date().toLocaleDateString('en-GB');
+      const cols = [...(code ? [{ t: 'الكود', f: (r) => `<span class="num">${esc(r.code || '')}</span>` }] : []), { t: 'الصنف', f: (r) => esc(r.name) }, { t: 'الوحدة', f: (r) => esc(r.unit || '') }, { t: 'السعر', n: 1, f: (r) => `<b>${money(r.price)}</b>` }, ...(wh ? [{ t: 'سعر الجملة', n: 1, f: (r) => (+r.price2 ? money(r.price2) : '') }] : [])];
+      const table = (rows) => tableHTML(cols, rows.slice().sort((a, c) => a.name.localeCompare(c.name, 'ar')));
+      const pages = pick.map((B, i) => {
+        const items = list.filter((p) => brandLabel(p.brand) === B.name);
+        const body = byCat ? B.cats.filter((c) => c.n).map((c) => { const rows = items.filter((p) => (p.category || '') === c.name); return rows.length ? `<h3 class="sec">${esc(c.name || 'أصناف أخرى')} <span>(${rows.length})</span></h3>${table(rows)}` : ''; }).join('') : table(items);
+        return `<section class="co" ${i ? 'style="page-break-before:always"' : ''}><div class="head"><div><h1>قائمة أسعار ${esc(B.name)}</h1><div class="sub">${items.length} صنف${byCat ? ` · ${B.cats.filter((c) => c.n).length} قسم` : ''}</div></div><div class="sub" style="text-align:left">${esc(company)}<br>${esc(b.name || '')}${b.phone ? ' — ' + esc(b.phone) : ''}<br>بتاريخ ${today}</div></div>${body}</section>`;
+      });
+      printHTML(pages.join(''), false, PRINT_A4 + '.sec{margin:12px 0 4px;font-size:14px;padding:4px 8px;background:#eef2f7;border-right:4px solid #1e3a8a}.sec span{font-weight:normal;color:#555;font-size:12px}table.t{margin-bottom:6px}table.t tr{page-break-inside:avoid}');
+      return false;
+    } }, { t: 'إغلاق' }] });
+  const mb = m.mb;
+  $('#pla', mb).onclick = (e) => { e.preventDefault(); $$('#plb input', mb).forEach((x) => (x.checked = true)); };
+  $('#pln', mb).onclick = (e) => { e.preventDefault(); $$('#plb input', mb).forEach((x) => (x.checked = false)); };
+}
 /* ---------- التسعير بهامش ربح: سعر البيع = التكلفة (لستة الشركة) × (1 + الضريبة) × (1 + الهامش) ---------- */
 function repriceModal(all, onDone) {
   const br = branchOf(curBranch()); const act = all.filter((p) => p.active);
