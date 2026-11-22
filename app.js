@@ -367,6 +367,17 @@ const normAr = (s) => String(s ?? '').toLowerCase().replace(/[ً-ٰٟـ]/g, '').
   .replace(/(?<!\d)\.|\.(?!\d)/g, ' ').replace(/[—–\-_()[\]{},،/\\:;'"|+*#×]+/g, ' ').replace(/\s+/g, ' ').trim();
 const smartMatch = (text, q) => { const w = normAr(q).split(' ').filter(Boolean); if (!w.length) return true; const t = ' ' + normAr(text) + ' '; return w.every((x) => t.includes(x)); };
 const prodMatch = (p, q) => String(p.code || '').toLowerCase().startsWith(String(q).trim().toLowerCase()) || (p.barcode && (String(p.barcode).includes(String(q).trim()) || (String(q).trim().length >= 6 && sameCode(p.barcode, q)))) || smartMatch(`${p.name} ${p.code || ''} ${p.category || ''} ${p.brand || ''}`, q);
+// مستويات أسعار العملاء — نفس حساب السيرفر (pos.tier_price)
+const TIERS = { retail: 'قطاعي (السعر العادي)', wholesale: 'جملة', super: 'جملة الجملة / موزعين', contractor: 'مقاولين' };
+const TIER_SHORT = { retail: 'قطاعي', wholesale: 'جملة', super: 'جملة الجملة', contractor: 'مقاولين' };
+const tierPrice = (p, tier, qty = 1) => {
+  const nz = (v) => (+v > 0 ? +v : null);
+  let v = tier === 'wholesale' ? nz(p.price2) : tier === 'super' ? nz(p.price3) ?? nz(p.price2) : tier === 'contractor' ? nz(p.price4) ?? nz(p.price2) : null;
+  v = v ?? +p.price;
+  if (+p.qb_qty > 0 && +p.qb_price > 0 && qty >= +p.qb_qty) v = Math.min(v, +p.qb_price);
+  return v;
+};
+const packOf = (p) => (+p.pack_qty > 1 ? { n: +p.pack_qty, name: p.pack_name || 'كرتونة' } : null);
 const partyMatch = (c, q) => smartMatch(`${c.name} ${c.phone || ''}`, q) || String(c.phone || '').replace(/\D/g, '').includes(String(q).replace(/\D/g, '') || '~');
 // قارئ الباركود بيكتب زي الكيبورد: نصلّح الأرقام العربي، والحروف لو الكيبورد كان على عربي، والأصفار في الأول
 const AR_KEYS = { 'ض': 'q', 'ص': 'w', 'ث': 'e', 'ق': 'r', 'ف': 't', 'غ': 'y', 'ع': 'u', 'ه': 'i', 'خ': 'o', 'ح': 'p', 'ش': 'a', 'س': 's', 'ي': 'd', 'ب': 'f', 'ل': 'g', 'ا': 'h', 'ت': 'j', 'ن': 'k', 'م': 'l', 'ئ': 'z', 'ء': 'x', 'ؤ': 'c', 'ر': 'v', 'ى': 'n', 'ة': 'm', 'ز': '.', 'و': ',', 'ك': ';', 'ط': "'", 'ظ': '/' };
@@ -815,6 +826,8 @@ const NAV = [
   { id: 'quotes', t: 'عروض الأسعار', ct: 'عروض سعر', i: 'quote', c: 1 },
   { id: 'shifts', t: 'الورديات وتقفيل اليوم', ct: 'ورديتي', i: 'clock', c: 1 },
   { id: 'customers', t: 'العملاء', ct: 'العملاء', i: 'users', perm: 'customers', c: 1 },
+  { grp: 'الجملة' },
+  { id: 'wholesale', t: 'البيع بالجملة', ct: 'الجملة', i: 'truck', perm: 'wholesale' },
   { grp: 'المخزون والمشتريات' },
   { id: 'products', t: 'الأصناف والأسعار', ct: 'الأسعار والمخزون', i: 'box', c: 1 },
   { id: 'stock', t: 'الجرد وتسوية المخزون', i: 'layers', perm: 'stock' },
@@ -1280,19 +1293,21 @@ VIEWS.pos = async (el) => {
     pg.innerHTML = list.slice(0, 300).map((p) => `<button class="pcard ${p.stock <= 0 ? 'out' : ''}" data-id="${p.id}" style="--cc:${catColor(p.category)}"><span class="nm">${p.tint ? '<span class="badge pri" title="أساس تلوين — هيطلب كود اللون وسعر التلوين">🎨</span> ' : ''}${esc(p.name)}</span><span class="row between"><span class="pr"><span class="num">${money(p.price)}</span> <span class="faint small">ج.م</span></span><span class="stk ${p.stock <= 0 ? 'out' : p.stock <= p.min_stock ? 'low' : ''}">${p.stock <= 0 ? 'نفذ' : 'متاح ' + qf(p.stock)}</span></span><span class="st">كود ${esc(p.code)}${p.category ? ' · ' + esc(p.category) : ''}</span></button>`).join('')
       + (list.length > 300 ? `<div class="faint small" style="grid-column:1/-1;text-align:center">يظهر أول 300 صنف — اختار تصنيف أو اكتب للبحث</div>` : '') + (!list.length ? '<div class="empty" style="grid-column:1/-1">لا توجد أصناف مطابقة</div>' : '');
   };
-  // سعر الجملة/المقاولين لو العميل جملة والصنف ليه سعر جملة
-  const isWholesale = () => !!(st.customer && st.customer.tier === 'wholesale');
-  const priceFor = (retail, price2) => (isWholesale() && price2 > 0 ? price2 : retail);
+  // السعر حسب مستوى العميل (قطاعي / جملة / جملة الجملة / مقاولين) وسعر الكمية — نفس حساب السيرفر
+  const curTier = () => (st.customer && st.customer.tier) || 'retail';
+  const ppOf = (p) => ({ price: p.price, price2: p.price2 || 0, price3: p.price3 || 0, price4: p.price4 || 0, qb_qty: p.qb_qty || 0, qb_price: p.qb_price || 0 });
+  const lineBase = (x) => r2(tierPrice(x.pp || { price: x.retail ?? x.base, price2: x.price2 }, curTier(), +x.qty) + (+x.tint || 0));
   // أساس تلوين: قبل ما يتضاف بنسأل عن كود اللون وسعر التلوين من الماكينة — والسطر بيبقى بسعر واحد شامل
   const add = (p, qty = 1, t) => {
-    if (p.tint && !t) return tintModal(p, priceFor(p.price, p.price2), (tt) => { add(p, qty, tt); ps.focus(); });
+    if (p.tint && !t) return tintModal(p, tierPrice(p, curTier(), qty), (tt) => { add(p, qty, tt); ps.focus(); });
     const tint = t ? r2(t.tint) : 0, color = t ? t.color : '';
     const ex = st.cart.find((x) => x.product_id === p.id && (x.color || '') === color && r2(x.tint || 0) === tint);
-    const base = r2(priceFor(p.price, p.price2) + tint);
-    if (ex) ex.qty = r2(+ex.qty + qty); else st.cart.push({ product_id: p.id, name: p.name + (color ? ' — لون ' + color : ''), price: base, base, retail: p.price, price2: p.price2 || 0, qty, stock: p.stock, unit: p.unit, ...(p.tint ? { tint, color } : {}) });
-    renderCart(true);
+    if (ex) ex.qty = r2(+ex.qty + qty);
+    else { const x = { product_id: p.id, name: p.name + (color ? ' — لون ' + color : ''), retail: p.price, price2: p.price2 || 0, pp: ppOf(p), qty, stock: p.stock, unit: p.unit, ...(p.tint ? { tint, color } : {}) }; x.base = x.price = lineBase(x); st.cart.push(x); }
+    applyTier(true);
   };
-  const applyTier = () => { for (const x of st.cart) { const nb = r2(priceFor(x.retail ?? x.base, x.price2) + (+x.tint || 0)); if (x.price === x.base) x.price = nb; x.base = nb; } renderCart(); };
+  // بعد تغيير العميل أو الكمية: نعيد حساب السعر الأساسي (لو الكاشير ماغيّرش السعر بإيده)
+  const applyTier = (scroll) => { for (const x of st.cart) { const nb = lineBase(x); if (x.price === x.base) x.price = nb; x.base = nb; } renderCart(scroll); };
   const subtotal = () => r2(st.cart.reduce((s, x) => s + x.qty * x.price, 0));
   // خصم خفي (بيتوزّع على الأسعار ومش بيظهر كسطر) + عمولة النقاش (مش بتتطبع خالص)
   const X = () => st.x || (st.x = {});
@@ -1311,7 +1326,7 @@ VIEWS.pos = async (el) => {
     const ci = $('#ci', el);
     ci.innerHTML = st.cart.length ? st.cart.map((x, i) => {
       const over = !allowNeg && x.qty > x.stock;
-      return `<div class="cline" data-i="${i}"><div class="nm">${esc(x.name)}${x.retail != null && r2(x.base - (+x.tint || 0)) !== x.retail ? ' <span class="badge ok">سعر جملة</span>' : ''}</div><b class="num">${money(x.qty * x.price)}</b>
+      return `<div class="cline" data-i="${i}"><div class="nm">${esc(x.name)}${x.retail != null && r2(x.base - (+x.tint || 0)) !== x.retail ? ` <span class="badge ok">${curTier() !== 'retail' && r2(x.base - (+x.tint || 0)) === r2(tierPrice({ ...(x.pp || { price: x.retail, price2: x.price2 }), qb_qty: 0 }, curTier())) ? 'سعر ' + TIER_SHORT[curTier()] : 'سعر الكمية'}</span>` : ''}</div><b class="num">${money(x.qty * x.price)}</b>
         <div class="ctl"><button class="qbtn" data-a="m">−</button><input class="in sm" type="number" step="any" min="0" data-a="q" value="${x.qty}"><button class="qbtn" data-a="p">+</button>
         <span class="faint small">×</span>${can('change_price') ? `<input class="in sm" type="number" step="any" min="0" data-a="pr" value="${x.price}" style="width:90px">` : `<span class="num small">${money(x.price)}</span>`}
         <span class="sp"></span>${over ? `<span class="bad small">المتاح ${qf(x.stock)}</span>` : ''}<button class="btn ghost sm" data-a="x" title="حذف">✕</button></div></div>`;
@@ -1323,7 +1338,7 @@ VIEWS.pos = async (el) => {
   const renderCust = () => {
     const c = st.customer;
     $('#cust', el).value = c ? c.name : '';
-    $('#custInfo', el).innerHTML = c ? `${c.tier === 'wholesale' ? '<span class="badge ok">عميل جملة / مقاول</span> ' : ''}${c.phone ? esc(c.phone) + ' · ' : ''}الرصيد الحالي: ${M(c.balance, c.balance > 0 ? 'warn' : '')} <button class="btn ghost sm" id="unCust">إلغاء</button>` : '';
+    $('#custInfo', el).innerHTML = c ? `${c.tier && c.tier !== 'retail' ? `<span class="badge ok">عميل ${TIER_SHORT[c.tier] || 'جملة'}</span> ` : ''}${c.phone ? esc(c.phone) + ' · ' : ''}الرصيد الحالي: ${M(c.balance, c.balance > 0 ? 'warn' : '')} <button class="btn ghost sm" id="unCust">إلغاء</button>` : '';
     const u = $('#unCust', el); if (u) u.onclick = () => { st.customer = null; renderCust(); applyTier(); };
   };
   // ===== تعليق الفاتورة (العميل مستني خلطة اللون مثلاً) =====
@@ -1396,13 +1411,13 @@ VIEWS.pos = async (el) => {
   $('#ci', el).addEventListener('click', (e) => {
     const a = e.target.closest('[data-a]'); if (!a) return; const i = +a.closest('.cline').dataset.i; const x = st.cart[i];
     if (a.dataset.a === 'p') x.qty = r2(+x.qty + 1); else if (a.dataset.a === 'm') { x.qty = r2(+x.qty - 1); if (x.qty <= 0) st.cart.splice(i, 1); } else if (a.dataset.a === 'x') st.cart.splice(i, 1); else return;
-    renderCart();
+    applyTier();
   });
   $('#ci', el).addEventListener('change', (e) => {
     const a = e.target.closest('[data-a]'); if (!a) return; const i = +a.closest('.cline').dataset.i; const x = st.cart[i];
     if (a.dataset.a === 'q') { const v = r2(a.value); if (v > 0) x.qty = v; else st.cart.splice(i, 1); }
     if (a.dataset.a === 'pr') { const v = r2(a.value); if (v >= 0) x.price = v; }
-    renderCart();
+    applyTier();
   });
   $('#disc', el).oninput = (e) => { st.disc = e.target.value; $('#tTot', el).textContent = money(netTotal()); renderX(); };
   $('#discMode', el).onchange = (e) => { st.discMode = e.target.value; renderCart(); };
@@ -1566,7 +1581,7 @@ VIEWS.sales = async (el) => {
     { t: 'رقم', f: (r) => `<b class="num">${r.doc_no}</b>${r.att ? ' <span title="فيها صور مرفقة">📎</span>' : ''}`, v: (r) => r.doc_no },
     ...(showBranchCol() ? [{ t: 'المعرض', f: (r) => brName(r.branch_id), v: (r) => branchOf(r.branch_id).name }] : []),
     { t: 'التاريخ', f: (r) => dt(r.date), v: (r) => r.date },
-    { t: 'النوع', f: (r) => (r.kind === 'return' ? '<span class="badge bad">مرتجع</span>' : '<span class="badge pri">بيع</span>'), v: (r) => (r.kind === 'return' ? 'مرتجع' : 'بيع') },
+    { t: 'النوع', f: (r) => (r.kind === 'return' ? '<span class="badge bad">مرتجع</span>' : r.channel === 'wholesale' ? '<span class="badge ok">جملة</span>' : '<span class="badge pri">بيع</span>') + (r.delivery_status ? ' 🚚' : ''), v: (r) => (r.kind === 'return' ? 'مرتجع' : r.channel === 'wholesale' ? 'جملة' : 'بيع') },
     { t: 'العميل', k: 'customer' }, { t: 'الكاشير', k: 'user_name' },
     { t: 'الإجمالي', n: 1, f: (r) => M(r.total), v: (r) => r.total },
     { t: 'المدفوع', n: 1, f: (r) => M(r.paid), v: (r) => r.paid },
@@ -1606,6 +1621,7 @@ async function saleModal(id, onChange) {
     body: `<div class="grid g4" style="margin-bottom:12px;font-size:13px">
         <div><div class="faint small">التاريخ</div>${dt(s.date)}</div><div><div class="faint small">المعرض</div>${brName(s.branch_id)}</div>
         <div><div class="faint small">الكاشير</div>${esc(s.user_name)}</div><div><div class="faint small">العميل</div>${esc(s.cust_name || s.customer_name || 'نقدي')} ${s.customer_id && s.customer_balance != null ? `<div class="small">رصيده ${M(s.customer_balance)}</div>` : ''}</div></div>
+      ${s.channel === 'wholesale' || s.rep_name || s.due_date || s.delivery_status ? `<div class="row small" style="gap:10px;margin-bottom:10px;flex-wrap:wrap">${s.channel === 'wholesale' ? '<span class="badge pri">فاتورة جملة</span>' : ''}${s.rep_name ? `<span>المندوب: <b>${esc(s.rep_name)}</b></span>` : ''}${s.due_date && s.total - s.paid > 0.009 ? `<span>ميعاد السداد: <b class="num ${s.due_date < ymd(new Date()) ? 'bad' : ''}">${esc(s.due_date)}</b></span>` : ''}${s.delivery_status ? `<span class="badge ${(DELIV[s.delivery_status] || [])[1] || ''}">🚚 ${(DELIV[s.delivery_status] || [s.delivery_status])[0]}</span>${s.delivery_driver ? ' مع ' + esc(s.delivery_driver) : ''}` : ''}</div>` : ''}
       ${s.status === 'void' ? '<div class="badge bad" style="margin-bottom:10px">هذه الفاتورة ملغاة</div>' : ''}
       ${s.ref_doc ? `<div class="small muted" style="margin-bottom:8px">مرتجع على فاتورة <b>${esc(s.ref_doc)}</b></div>` : ''}
       <div id="it"></div>
@@ -1616,6 +1632,7 @@ async function saleModal(id, onChange) {
       { t: `${icon('print')} طباعة`, cls: 'pri', fn: () => { printSale(s); return false; } },
       { t: 'طباعة A4', fn: () => { printSale(s, 'a4'); return false; } },
       { t: '💬 واتساب', fn: () => { sendSaleWhatsApp(s); return false; } },
+      ...(isSale && (s.channel === 'wholesale' || s.delivery_status) ? [{ t: '📦 إذن تسليم', fn: () => { printDeliveryNote(s); return false; } }] : []),
       ...(isAdmin() ? [{ t: '🎥 الكاميرا', fn: () => { camModal(s.branch_id, s.date, `${isSale ? 'فاتورة بيع' : 'مرتجع'} ${s.doc_no} — ${s.user_name || ''}`); return false; } }] : []),
       ...(isSale && s.status === 'ok' && can('returns') ? [{ t: 'عمل مرتجع', fn: (mb, close) => { close(); returnModal(s, onChange); } }] : []),
       ...(isAdmin() && s.status === 'ok' ? [{ t: 'إلغاء الفاتورة', cls: 'bad', fn: async (mb, close) => { const r = await promptBox('إلغاء الفاتورة', 'سبب الإلغاء (المخزون والخزينة هيرجعوا زي ما كانوا):'); if (r == null) return false; await POST(`/api/sales/${s.id}/void`, { reason: r }); toast('تم إلغاء الفاتورة', 'ok'); dropCache(); close(); onChange && onChange(); } }] : []),
@@ -1818,7 +1835,14 @@ function productForm(p, onSave, list) {
       <div class="field"><label class="f">حد الطلب (تنبيه النواقص)</label><input class="in" type="number" step="any" name="min_stock" value="${p.min_stock ?? 0}"></div>
       ${sc ? `<div class="field"><label class="f">سعر التكلفة</label><input class="in" type="number" step="any" name="cost" value="${p.cost ?? ''}"></div>` : ''}
       <div class="field"><label class="f">سعر البيع (قطاعي) *</label><input class="in" type="number" step="any" name="price" value="${p.price ?? ''}"></div>
-      <div class="field"><label class="f">سعر الجملة / المقاولين <span class="faint">(اختياري)</span></label><input class="in" type="number" step="any" name="price2" value="${p.price2 || ''}" placeholder="بيتطبق لما تختار عميل جملة"></div>
+      <div class="field"><label class="f">سعر الجملة <span class="faint">(اختياري)</span></label><input class="in" type="number" step="any" name="price2" value="${p.price2 || ''}" placeholder="بيتطبق لما تختار عميل جملة"></div>
+      <details class="field" style="grid-column:1/-1" ${+p.price3 || +p.price4 || +p.pack_qty || +p.qb_qty ? 'open' : ''}><summary style="cursor:pointer;font-weight:700">📦 الجملة: مستويات الأسعار والكرتونة وسعر الكمية</summary>
+        <div class="grid g2" style="margin-top:8px">
+        <div class="field"><label class="f">سعر جملة الجملة / الموزعين <span class="faint">(فاضي = سعر الجملة)</span></label><input class="in" type="number" step="any" name="price3" value="${p.price3 || ''}"></div>
+        <div class="field"><label class="f">سعر المقاولين <span class="faint">(فاضي = سعر الجملة)</span></label><input class="in" type="number" step="any" name="price4" value="${p.price4 || ''}"></div>
+        <div class="field"><label class="f">العبوة الكبيرة</label><div class="row" style="flex-wrap:nowrap;gap:6px"><input class="in" name="pack_name" list="dlpk" value="${esc(p.pack_name || '')}" placeholder="كرتونة" style="flex:1"><datalist id="dlpk">${['كرتونة', 'دستة', 'شوال', 'بالتة', 'رابطة'].map((x) => `<option value="${x}">`).join('')}</datalist><span class="small">فيها</span><input class="in" type="number" step="any" min="0" name="pack_qty" value="${p.pack_qty || ''}" placeholder="4" style="width:80px"><span class="small">${esc(p.unit || 'قطعة')}</span></div></div>
+        <div class="field"><label class="f">سعر الكمية <span class="faint">(لأي عميل)</span></label><div class="row" style="flex-wrap:nowrap;gap:6px"><span class="small">من</span><input class="in" type="number" step="any" min="0" name="qb_qty" value="${p.qb_qty || ''}" placeholder="40" style="width:80px"><span class="small">قطعة، القطعة بـ</span><input class="in" type="number" step="any" min="0" name="qb_price" value="${p.qb_price || ''}" style="flex:1"></div></div>
+        </div></details>
       ${isNew ? `<div class="field"><label class="f">رصيد أول المدة (الكمية الموجودة حالياً)</label><input class="in" type="number" step="any" name="stock" value=""></div>` : `<div class="field"><label class="f">الرصيد الحالي</label><div class="num" style="padding:8px 0;font-weight:800">${qf(p.stock)}</div><div class="small faint">لتعديل الرصيد استخدم شاشة الجرد أو فاتورة شراء</div></div>`}
       <div class="field" style="grid-column:1/-1"><label class="f">ملاحظات</label><input class="in" name="notes" value="${esc(p.notes)}"></div>
       <label class="chk"><input type="checkbox" name="active" ${p.active ? 'checked' : ''}> الصنف نشط ويظهر في الكاشير</label>
@@ -2315,8 +2339,10 @@ function partyForm(kind, c, onSave) {
       <div class="grid g2"><div class="field"><label class="f">الموبايل</label><input class="in" name="phone" value="${esc(c.phone)}" dir="ltr"></div>
       <div class="field"><label class="f">العنوان</label><input class="in" name="address" value="${esc(c.address)}"></div>
       ${isAdmin() ? `<div class="field"><label class="f">رصيد أول المدة ${kind === 'customer' ? '(مديونية عليه)' : '(مستحق له)'}</label><input class="in" type="number" step="any" name="opening" value="${c.opening || ''}"></div>` : ''}
-      ${kind === 'customer' && isAdmin() ? `<div class="field"><label class="f">حد الائتمان (0 = بدون حد)</label><input class="in" type="number" step="any" name="credit_limit" value="${c.credit_limit || ''}"></div>
-        <div class="field"><label class="f">نوع العميل</label><select class="in" name="tier">${opt('retail', 'قطاعي (السعر العادي)', c.tier || 'retail')}${opt('wholesale', 'جملة / مقاول (سعر الجملة)', c.tier)}</select></div>` : ''}</div>
+      ${kind === 'customer' && (isAdmin() || can('wholesale')) ? `<div class="field"><label class="f">مستوى السعر</label><select class="in" name="tier">${Object.entries(TIERS).map(([k, x]) => opt(k, x, c.tier || 'retail')).join('')}</select></div>
+        ${isAdmin() ? `<div class="field"><label class="f">حد الائتمان — أقصى آجل (0 = بدون حد)</label><input class="in" type="number" step="any" name="credit_limit" value="${c.credit_limit || ''}"></div>` : ''}
+        <div class="field"><label class="f">مدة السداد بالأيام <span class="faint">(0 = من غير ميعاد)</span></label><input class="in" type="number" step="1" min="0" name="pay_days" value="${c.pay_days || ''}" placeholder="مثال: 30"></div>
+        <div class="field"><label class="f">المندوب المسؤول</label><select class="in" name="rep_id" data-rep="${c.rep_id || ''}"><option value="">— من غير مندوب —</option></select></div>` : ''}</div>
       <div class="field"><label class="f">ملاحظات</label><input class="in" name="notes" value="${esc(c.notes)}"></div>
       ${!isNew ? `<label class="chk"><input type="checkbox" name="active" ${c.active ? 'checked' : ''}> نشط</label>` : ''}`,
     buttons: [{ t: 'حفظ', cls: 'pri', fn: async (mb) => {
@@ -2327,7 +2353,7 @@ function partyForm(kind, c, onSave) {
       toast('تم الحفظ', 'ok'); S.cache[(kind === 'customer' ? 'c' : 's') + curBranch()] = null;
       onSave && onSave(isNew ? r : { ...c, ...v });
     } }, { t: 'إلغاء' }],
-    onOpen: (mb) => { mb._att = attachUI($('[name=notes]', mb)); if (!isNew) { const d = document.createElement('div'); d.style.marginTop = '8px'; $('[name=notes]', mb).closest('.field').append(d); attView(kind, c.id, d); } },
+    onOpen: (mb) => { const rs = $('[name=rep_id]', mb); if (rs) GET('/api/reps').then((reps) => { rs.innerHTML += reps.map((r) => opt(r.id, r.name, String(rs.dataset.rep))).join(''); }).catch(() => {}); mb._att = attachUI($('[name=notes]', mb)); if (!isNew) { const d = document.createElement('div'); d.style.marginTop = '8px'; $('[name=notes]', mb).closest('.field').append(d); attView(kind, c.id, d); } },
   });
 }
 function partyView(kind) {
@@ -2335,7 +2361,7 @@ function partyView(kind) {
     const lbl = kind === 'customer' ? 'العميل' : 'المورد';
     el.innerHTML = `<div class="toolbar"><input class="in" id="q" placeholder="بحث بالاسم أو الموبايل" style="width:240px"><label class="chk"><input type="checkbox" id="debt"> ${kind === 'customer' ? 'عليهم مديونية فقط' : 'لهم مستحقات فقط'}</label><span class="sp"></span><button class="btn pri" id="add">${icon('plus')}${kind === 'customer' ? 'عميل جديد' : 'مورد جديد'}</button><button class="btn" id="csv">${icon('download')}Excel</button></div><div class="grid g3" id="sum" style="margin-bottom:14px"></div><div id="tb"></div>`;
     let all = [], rows = [];
-    const cols = [{ t: 'الاسم', f: (r) => `<b>${esc(r.name)}</b>${r.tier === 'wholesale' ? ' <span class="badge ok">جملة</span>' : ''}${r.active ? '' : ' <span class="badge">موقوف</span>'}`, v: (r) => r.name }, ...(showBranchCol() ? [{ t: 'المعرض', f: (r) => brName(r.branch_id), v: (r) => branchOf(r.branch_id).name }] : []), { t: 'الموبايل', f: (r) => `<span class="num">${esc(r.phone || '')}</span>`, v: (r) => r.phone }, { t: 'العنوان', k: 'address' },
+    const cols = [{ t: 'الاسم', f: (r) => `<b>${esc(r.name)}</b>${r.tier && r.tier !== 'retail' ? ` <span class="badge ok">${TIERS[r.tier] || 'جملة'}</span>` : ''}${r.active ? '' : ' <span class="badge">موقوف</span>'}`, v: (r) => r.name }, ...(showBranchCol() ? [{ t: 'المعرض', f: (r) => brName(r.branch_id), v: (r) => branchOf(r.branch_id).name }] : []), { t: 'الموبايل', f: (r) => `<span class="num">${esc(r.phone || '')}</span>`, v: (r) => r.phone }, { t: 'العنوان', k: 'address' },
       { t: kind === 'customer' ? 'الرصيد (عليه)' : 'الرصيد (له)', n: 1, f: (r) => M(r.balance, r.balance > 0.009 ? (kind === 'customer' ? 'warn' : 'bad') : r.balance < -0.009 ? 'ok' : 'faint'), v: (r) => r.balance },
       { t: '', noCsv: 1, f: () => `<span class="row" style="flex-wrap:nowrap"><button class="btn sm" data-act="st">كشف حساب</button><button class="btn sm" data-act="pay">${kind === 'customer' ? 'تحصيل' : 'سداد'}</button><button class="btn sm" data-act="ed">تعديل</button></span>` }];
     const filter = () => {
@@ -2709,6 +2735,240 @@ async function printQuote(q) {
    الرصيد بيتأثر لما الشيك يتصرف فعلاً — وقتها بيتعمل سند قبض/صرف لوحده
    ===================================================================== */
 const CHQ_ST = { pending: ['تحت التحصيل', 'warn'], collected: ['اتصرف', 'ok'], bounced: ['مرتد', 'bad'], cancelled: ['ملغي', ''] };
+/* =====================================================================
+   البيع بالجملة: فاتورة جملة · التحصيل وأعمار الديون · المناديب · التوصيل
+   ===================================================================== */
+const DELIV = { pending: ['مستني التوصيل', 'warn'], out: ['خرج للتوصيل', 'pri'], delivered: ['اتسلم ✓', 'ok'] };
+VIEWS.wholesale = async (el) => {
+  const tab = S.whTab || (S.whTab = 'inv');
+  const TABS = [['inv', '🧾 فاتورة جملة'], ['col', '💰 التحصيل وأعمار الديون'], ['reps', '🧑‍💼 المناديب'], ['dlv', '🚚 التوصيل']];
+  el.innerHTML = `<div class="seg" id="wt" style="margin-bottom:14px;flex-wrap:wrap">${TABS.map(([k, x]) => `<button data-t="${k}" class="${tab === k ? 'on' : ''}">${x}</button>`).join('')}</div><div id="wb"></div>`;
+  $$('#wt button', el).forEach((b) => (b.onclick = () => { S.whTab = b.dataset.t; route(); }));
+  const box = $('#wb', el);
+  if (tab === 'inv') return whInvoice(box);
+  if (tab === 'col') return whCollect(box);
+  if (tab === 'reps') return whReps(box);
+  return whDeliv(box);
+};
+// الكمية بالقطعة → "2 كرتونة + 1"
+const packText = (p, pcs) => { const k = p && packOf(p); if (!k || pcs < k.n) return ''; const a = Math.floor(pcs / k.n), b = r2(pcs - a * k.n); return `${qf(a)} ${k.name}${b ? ` + ${qf(b)}` : ''}`; };
+
+async function whInvoice(box) {
+  if (!curBranch()) { box.innerHTML = '<div class="empty">اختار المعرض من فوق الأول عشان تعمل فاتورة جملة</div>'; return; }
+  const [prods, custs, reps] = await Promise.all([products(), customers(true), GET('/api/reps').catch(() => [])]);
+  const D = S.whDraft || (S.whDraft = { customer: null, lines: [], rep_id: '', disc: '', paid: '', method: 'cash', notes: '', delivery: false, addr: '', driver: '' });
+  const canPrice = can('change_price');
+  box.innerHTML = `<div class="grid g21" style="gap:14px;align-items:start">
+    <div class="card"><div class="hd">الأصناف<span class="sp"></span><span class="small faint" id="wcnt"></span></div><div class="bd">
+      <div class="row" style="flex-wrap:nowrap;gap:6px;margin-bottom:10px"><div style="flex:1;position:relative"><input class="in" id="wp" placeholder="اكتب اسم الصنف أو الكود — أو امسح الباركود" autocomplete="off"></div>${camBtn('wcam')}</div>
+      <div class="tbl-wrap"><table class="t"><thead><tr><th>#</th><th>الصنف</th><th>الوحدة</th><th class="n">العدد</th><th class="n">بالقطعة</th><th class="n">سعر القطعة</th><th class="n">الإجمالي</th><th></th></tr></thead><tbody id="wl"></tbody></table></div>
+    </div></div>
+    <div class="card"><div class="hd">العميل والدفع</div><div class="bd">
+      <div class="field"><label class="f">العميل *</label><div style="position:relative"><input class="in" id="wc" placeholder="اكتب اسم العميل أو الموبايل" autocomplete="off"></div><div id="wci" class="small" style="margin-top:6px"></div></div>
+      <div class="field"><label class="f">المندوب</label><select class="in" id="wr"><option value="">— من غير مندوب —</option>${reps.map((r) => opt(r.id, r.name, String(D.rep_id))).join('')}</select></div>
+      <div class="field"><label class="f">خصم على الفاتورة (ج.م)</label><input class="in" type="number" step="any" min="0" id="wd" value="${D.disc}"></div>
+      <div id="wtot" class="card" style="padding:10px 14px;background:#f8fafd;margin-bottom:12px"></div>
+      <div class="grid g2" style="gap:0 10px"><div class="field"><label class="f">مدفوع دلوقتي</label><input class="in" type="number" step="any" min="0" id="wpaid" value="${D.paid}" placeholder="0 = آجل كله"></div>
+        <div class="field"><label class="f">طريقة الدفع</label><select class="in" id="wm">${methodOpts()}</select></div></div>
+      <div id="wdue" class="small" style="margin:-4px 0 10px"></div>
+      <label class="chk"><input type="checkbox" id="wdl" ${D.delivery ? 'checked' : ''}> 🚚 توصيل للعميل</label>
+      <div id="wdlf" style="display:${D.delivery ? '' : 'none'}"><div class="field"><label class="f">عنوان التوصيل</label><input class="in" id="wa" value="${esc(D.addr)}"></div><div class="field"><label class="f">السواق / العربية</label><input class="in" id="wdr" value="${esc(D.driver)}"></div></div>
+      <div class="field"><label class="f">ملاحظات</label><input class="in" id="wn" value="${esc(D.notes)}"></div>
+      <button class="btn ok lg" id="wsave" style="width:100%">حفظ فاتورة الجملة</button>
+      <button class="btn ghost sm" id="wclr" style="width:100%;margin-top:6px">مسح الفاتورة</button>
+    </div></div></div>`;
+  $('#wm', box).value = D.method;
+  const tier = () => (D.customer && D.customer.tier) || 'retail';
+  const pcs = (l) => r2(+l.n * (l.unit === 'pack' && packOf(l.p) ? packOf(l.p).n : 1));
+  const reprice = () => { for (const l of D.lines) { const b = r2(tierPrice(l.p, tier(), pcs(l))); if (!l.manual) l.price = b; l.base = b; } };
+  const sub = () => r2(D.lines.reduce((s, l) => s + pcs(l) * l.price, 0));
+  const net = () => r2(Math.max(0, sub() - (+D.disc || 0)));
+  const renderTot = () => {
+    const c = D.customer, n = net(), paid = Math.min(+D.paid || 0, n), rem = r2(n - paid);
+    const after = c ? r2((+c.balance || 0) + rem) : 0, lim = c ? +c.credit_limit || 0 : 0;
+    $('#wtot', box).innerHTML = `<div class="row between"><span>الإجمالي</span><b class="num">${money(sub())}</b></div>${+D.disc ? `<div class="row between"><span>الخصم</span><span class="num">${money(+D.disc)}</span></div>` : ''}
+      <div class="row between" style="font-size:18px;margin-top:4px"><b>الصافي</b><b class="num">${money(n)}</b></div>${rem > 0.009 ? `<div class="row between warn"><span>آجل على العميل</span><b class="num">${money(rem)}</b></div>` : ''}`;
+    const due = c && rem > 0.009 && c.pay_days > 0 ? (() => { const d = new Date(); d.setDate(d.getDate() + +c.pay_days); return ymd(d); })() : '';
+    $('#wdue', box).innerHTML = (rem > 0.009 && lim > 0 ? `<div class="${after > lim ? 'bad' : 'muted'}">رصيده بعد الفاتورة ${money(after)} من حد ${money(lim)}${after > lim ? ' ⚠️ هيعدّي حد الائتمان' + (isAdmin() ? ' (هيطلب منك تأكيد)' : ' — المدير بس يقدر يكمّل') : ''}</div>` : '') + (due ? `<div class="muted">ميعاد السداد: <b class="num">${due}</b> (${c.pay_days} يوم)</div>` : '');
+  };
+  const renderLines = () => {
+    reprice();
+    $('#wl', box).innerHTML = D.lines.length ? D.lines.map((l, i) => { const k = packOf(l.p); const q = pcs(l); return `<tr data-i="${i}"><td>${i + 1}</td><td><b>${esc(l.p.name)}</b><div class="small faint">متاح ${qf(l.p.stock)}${k ? ` · ${k.name} = ${qf(k.n)}` : ''}</div></td>
+      <td>${k ? `<select class="in sm" data-a="u" style="width:auto">${opt('pc', l.p.unit || 'قطعة', l.unit)}${opt('pack', k.name, l.unit)}</select>` : `<span class="small">${esc(l.p.unit || 'قطعة')}</span>`}</td>
+      <td class="n"><input class="in sm" type="number" step="any" min="0" data-a="n" value="${l.n}" style="width:80px"></td>
+      <td class="n"><span class="num">${qf(q)}</span>${q > l.p.stock ? '<div class="small bad">أكتر من المتاح</div>' : ''}</td>
+      <td class="n">${canPrice ? `<input class="in sm" type="number" step="any" min="0" data-a="pr" value="${l.price}" style="width:96px">` : `<span class="num">${money(l.price)}</span>`}${l.price !== +l.p.price ? `<div class="small ok">${l.price === r2(tierPrice({ ...l.p, qb_qty: 0 }, tier())) && tier() !== 'retail' ? TIER_SHORT[tier()] : l.manual ? 'سعر يدوي' : 'سعر الكمية'}</div>` : ''}</td>
+      <td class="n"><b class="num">${money(q * l.price)}</b></td><td><button class="btn ghost sm" data-a="x">✕</button></td></tr>`; }).join('')
+      : '<tr><td colspan="8" class="empty">ضيف الأصناف من خانة البحث أو امسح الباركود</td></tr>';
+    $('#wcnt', box).textContent = D.lines.length ? `${D.lines.length} صنف` : '';
+    renderTot();
+  };
+  const addP = (p) => {
+    if (p.tint) return toast('أساسات التلوين بتتباع من نقطة البيع (عشان كود اللون وسعر التلوين)', 'warn');
+    const ex = D.lines.find((l) => l.p.id === p.id); const k = packOf(p);
+    if (ex) ex.n = r2(+ex.n + 1); else D.lines.push({ p, unit: k ? 'pack' : 'pc', n: 1, price: 0, manual: false });
+    renderLines(); $('#wp', box).value = ''; $('#wp', box).focus();
+  };
+  picker($('#wp', box), { items: () => prods, match: prodMatch, exact: prodExact, limit: 30, label: (p) => esc(p.name), sub: (p) => `${money(tierPrice(p, tier()))} · متاح ${qf(p.stock)}`, onPick: addP });
+  $('#wp', box).addEventListener('keydown', (e) => { if (e.key !== 'Enter' || $('.dd [data-i]', box)) return; const q = $('#wp', box).value.trim(); if (!q) return; const ex = prods.find((p) => prodExact(p, q)); e.preventDefault(); if (ex) { beepOk(); addP(ex); } else { beepBad(); toast(`مفيش صنف بالكود ${codeFromScan(q)}`, 'bad'); } });
+  if ($('#wcam', box)) $('#wcam', box).onclick = () => camScan((code) => { const ex = prods.find((p) => prodExact(p, code)); if (ex && !ex.tint) { addP(ex); toast(`اتضاف: ${ex.name}`, 'ok'); return true; } toast(`مفيش صنف بالكود ${codeFromScan(code)}`, 'bad'); return true; }, { multi: true, title: '📷 امسح أصناف الجملة' });
+  const wl = $('#wl', box);
+  wl.addEventListener('change', (e) => {
+    const a = e.target.dataset.a; if (!a) return; const l = D.lines[+e.target.closest('tr').dataset.i];
+    if (a === 'u') l.unit = e.target.value; if (a === 'n') { const v = r2(e.target.value); if (v > 0) l.n = v; else D.lines.splice(D.lines.indexOf(l), 1); }
+    if (a === 'pr') { const v = r2(e.target.value); if (v >= 0) { l.price = v; l.manual = v !== l.base; } }
+    renderLines();
+  });
+  wl.addEventListener('click', (e) => { if (e.target.dataset.a === 'x') { D.lines.splice(+e.target.closest('tr').dataset.i, 1); renderLines(); } });
+  // العميل
+  const custList = () => (S.cache['c' + curBranch()] || custs).filter((c) => c.name !== 'عميل نقدي');
+  const renderCust = () => {
+    const c = D.customer; $('#wc', box).value = c ? c.name : '';
+    $('#wci', box).innerHTML = c ? `<span class="badge ${c.tier !== 'retail' ? 'ok' : ''}">${esc(TIER_SHORT[c.tier] || 'قطاعي')}</span> ${c.phone ? `<span class="num">${esc(c.phone)}</span> · ` : ''}رصيده: ${M(c.balance, c.balance > 0 ? 'warn' : '')}${+c.credit_limit ? ` · الحد ${money(c.credit_limit)}` : ''}${c.pay_days ? ` · سداد ${c.pay_days} يوم` : ''}${c.tier === 'retail' ? '<div class="small warn">العميل ده قطاعي — غيّر مستواه من "العملاء" عشان ياخد أسعار الجملة</div>' : ''}` : '<span class="faint">اختار العميل — الأسعار بتتحسب على مستواه</span>';
+  };
+  picker($('#wc', box), { items: custList, match: partyMatch, label: (c) => `${esc(c.name)} ${c.tier && c.tier !== 'retail' ? `<span class="badge ok">${TIER_SHORT[c.tier]}</span>` : ''}`, sub: (c) => `${esc(c.phone || '')} · ${money(c.balance)}`,
+    onPick: (c) => { D.customer = c; if (c.rep_id) { D.rep_id = c.rep_id; $('#wr', box).value = c.rep_id; } if (!D.addr) { D.addr = c.address || ''; $('#wa', box).value = D.addr; } renderCust(); renderLines(); $('#wp', box).focus(); } });
+  $('#wc', box).addEventListener('blur', () => setTimeout(renderCust, 200));
+  $('#wr', box).onchange = (e) => (D.rep_id = e.target.value);
+  $('#wd', box).oninput = (e) => { D.disc = e.target.value; renderTot(); };
+  $('#wpaid', box).oninput = (e) => { D.paid = e.target.value; renderTot(); };
+  $('#wm', box).onchange = (e) => (D.method = e.target.value);
+  $('#wn', box).oninput = (e) => (D.notes = e.target.value);
+  $('#wa', box).oninput = (e) => (D.addr = e.target.value);
+  $('#wdr', box).oninput = (e) => (D.driver = e.target.value);
+  $('#wdl', box).onchange = (e) => { D.delivery = e.target.checked; $('#wdlf', box).style.display = D.delivery ? '' : 'none'; if (D.delivery && !D.addr && D.customer) { D.addr = D.customer.address || ''; $('#wa', box).value = D.addr; } };
+  $('#wclr', box).onclick = async () => { if (D.lines.length && !(await confirmBox('مسح فاتورة الجملة؟', 'مسح', 'bad'))) return; S.whDraft = null; route(); };
+  const send = async (force) => {
+    const n = net(), paid = Math.min(+D.paid || 0, n);
+    const body = { branch_id: curBranch(), channel: 'wholesale', customer_id: D.customer.id, rep_id: +D.rep_id || 0, items: D.lines.map((l) => ({ product_id: l.p.id, qty: pcs(l), price: l.price })),
+      discount: r2(+D.disc || 0), pays: paid > 0 ? [{ method: D.method, amount: paid }] : [], notes: D.notes, delivery: D.delivery, delivery_addr: D.addr, delivery_driver: D.driver, ...(force ? { force_credit: true } : {}) };
+    return POST('/api/sales', body);
+  };
+  $('#wsave', box).onclick = async () => {
+    if (!D.customer) return toast('اختار العميل الأول', 'bad');
+    if (!D.lines.length) return toast('ضيف الأصناف', 'bad');
+    const b = $('#wsave', box); b.disabled = true;
+    try {
+      let s;
+      try { s = await send(false); }
+      catch (e) { if (!(isAdmin() && /حد الائتمان/.test(e.message))) throw e; if (!(await confirmBox(`${esc(e.message)}<br><br>تكمّل الفاتورة برضه؟`, 'كمّل', 'bad'))) return; s = await send(true); }
+      S.whDraft = null; dropCache(); toast(`اتحفظت فاتورة الجملة ${s.doc_no} ✓`, 'ok'); route();
+      setTimeout(() => modal({ title: `✓ فاتورة جملة ${s.doc_no}`, body: `<div style="text-align:center"><div class="muted">${esc(s.cust_name || '')}</div><div class="num" style="font-size:28px;font-weight:800">${money(s.total)}</div>${s.total - s.paid > 0.009 ? `<div class="warn">آجل ${money(s.total - s.paid)}${s.due_date ? ` — يستحق ${s.due_date}` : ''}</div>` : ''}${s.delivery_status ? '<div class="small">🚚 في قائمة التوصيل</div>' : ''}</div>`,
+        buttons: [{ t: `${icon('print')} طباعة الفاتورة A4`, cls: 'pri', fn: () => { printSale(s, 'a4'); return false; } }, { t: '📦 إذن تسليم', fn: () => { printDeliveryNote(s); return false; } }, { t: 'فتح الفاتورة', fn: () => saleModal(s.id) }, { t: 'فاتورة جديدة' }] }), 80);
+    } catch (e) { toast(e.message, 'bad'); } finally { b.disabled = false; }
+  };
+  renderCust(); renderLines();
+}
+// إذن تسليم بضاعة (من غير أسعار) — للسواق والعميل يمضي
+async function printDeliveryNote(s) {
+  if (!s.items) s = await GET('/api/sales/' + s.id);
+  const b = branchOf(s.branch_id); const prods = S.cache['p' + s.branch_id] || [];
+  const lc = await invLogo(); const lg = invLogoHTML(lc, s.branch_id, false);
+  const meta = [['رقم الفاتورة', s.doc_no], ['التاريخ', s.date.slice(0, 10)], ['العميل', s.cust_name || s.customer_name || ''], s.cust_phone ? ['الموبايل', s.cust_phone] : null, s.delivery_addr ? ['العنوان', s.delivery_addr] : null, s.delivery_driver ? ['السواق', s.delivery_driver] : null, s.rep_name ? ['المندوب', s.rep_name] : null].filter(Boolean);
+  printHTML(`<div class="head"><div style="display:flex;gap:12px;align-items:center">${lg}<div><h1>${esc(b.name)}</h1><div class="sub">${esc(S.settings.company_name || '')}</div><div class="sub">${esc(b.address || '')} ${b.phone ? ' — ت: ' + esc(b.phone) : ''}</div></div></div>
+    <div><h2>إذن تسليم بضاعة</h2><table class="meta">${meta.map(([k, v]) => `<tr><td>${k}:</td><td><b>${esc(v)}</b></td></tr>`).join('')}</table></div></div>
+    <table class="t"><thead><tr><th>#</th><th>الصنف</th><th class="n">الكمية</th><th>بالعبوة الكبيرة</th><th>ملاحظات</th></tr></thead><tbody>
+    ${s.items.map((i, n) => { const p = prods.find((x) => x.id === i.product_id); return `<tr><td>${n + 1}</td><td>${esc(i.name)}</td><td class="n">${qf(i.qty)}</td><td>${esc(packText(p, i.qty))}</td><td style="width:22%"></td></tr>`; }).join('')}</tbody>
+    <tfoot><tr><td colspan="2">إجمالي القطع</td><td class="n">${qf(s.items.reduce((a, i) => a + +i.qty, 0))}</td><td colspan="2"></td></tr></tfoot></table>
+    <p style="margin-top:14px">استلمت البضاعة الموضحة أعلاه بحالة سليمة وكاملة.</p>
+    <div style="display:flex;gap:20px;margin-top:40px;text-align:center">${['المستلم (الاسم والتوقيع)', 'السواق', 'أمين المخزن'].map((x) => `<div style="flex:1"><b>${x}</b><div style="border-bottom:1px solid #000;height:40px;margin:0 10px"></div></div>`).join('')}</div>`, false);
+}
+async function whCollect(box) {
+  const st = S.whCol || (S.whCol = { q: '', over: false, rep: '' });
+  const [rows, reps] = await Promise.all([GET('/api/wholesale/aging', bq()), GET('/api/reps').catch(() => [])]);
+  const sum = (k, a = rows) => a.reduce((s, r) => s + (+r[k] || 0), 0);
+  box.innerHTML = `<div class="grid g4" style="margin-bottom:14px">${stat('إجمالي المديونيات', M(sum('balance')), `${rows.length} عميل`, 'warn', 'wallet', '#d97706')}${stat('متأخر عن ميعاد السداد', M(sum('overdue')), `${rows.filter((r) => r.overdue > 0).length} عميل`, sum('overdue') > 0 ? 'bad' : '', 'alert', '#dc2626')}
+      ${stat('أقدم من 90 يوم', M(sum('b90')), 'ديون قديمة', sum('b90') > 0 ? 'bad' : '', 'clock', '#7c3aed')}${stat('عدّوا حد الائتمان', `<span class="num">${rows.filter((r) => r.over_limit).length}</span>`, 'عميل', '', 'shield', '#0e7490')}</div>
+    <div class="toolbar"><input class="in" id="cq" placeholder="بحث بالاسم أو الموبايل" value="${esc(st.q)}" style="width:220px"><select class="in" id="cr" style="width:auto"><option value="">كل المناديب</option>${reps.map((r) => opt(r.id, r.name, String(st.rep))).join('')}</select>
+      <label class="chk"><input type="checkbox" id="co" ${st.over ? 'checked' : ''}> المتأخرين بس</label><span class="sp"></span><button class="btn" id="ccsv">${icon('download')}Excel</button><button class="btn" id="cprn">${icon('print')}طباعة</button></div>
+    <p class="small muted" style="margin:0 0 10px">الدين بيتقسم حسب عمر الفواتير اللي لسه مادفعهاش (المدفوعات بتسدد الأقدم الأول). "متأخر" = عدّى مدة السداد بتاعة العميل.</p><div id="ctb"></div>`;
+  const cols = [
+    { t: 'العميل', f: (r) => `<b>${esc(r.name)}</b> ${r.tier && r.tier !== 'retail' ? `<span class="badge ok">${TIER_SHORT[r.tier]}</span>` : ''}${r.phone ? `<div class="small faint num">${esc(r.phone)}</div>` : ''}`, v: (r) => r.name },
+    ...(showBranchCol() ? [{ t: 'المعرض', f: (r) => brName(r.branch_id), v: (r) => branchOf(r.branch_id).name }] : []),
+    { t: 'المندوب', f: (r) => esc(r.rep_name || ''), v: (r) => r.rep_name },
+    { t: 'الرصيد', n: 1, f: (r) => `<b>${M(r.balance, 'warn')}</b>${+r.credit_limit ? `<div class="small ${r.over_limit ? 'bad' : 'faint'}">من حد ${money(r.credit_limit)}</div>` : ''}`, v: (r) => r.balance },
+    { t: '0–30 يوم', n: 1, f: (r) => (r.b0 ? M(r.b0) : ''), v: (r) => r.b0 }, { t: '31–60', n: 1, f: (r) => (r.b30 ? M(r.b30) : ''), v: (r) => r.b30 },
+    { t: '61–90', n: 1, f: (r) => (r.b60 ? M(r.b60, 'warn') : ''), v: (r) => r.b60 }, { t: '+90', n: 1, f: (r) => (r.b90 ? M(r.b90, 'bad') : ''), v: (r) => r.b90 },
+    { t: 'متأخر', n: 1, f: (r) => (r.overdue ? `<b>${M(r.overdue, 'bad')}</b>` : '<span class="faint small">—</span>'), v: (r) => r.overdue },
+    { t: 'آخر دفعة', f: (r) => `<span class="num small">${esc((r.last_pay || '').slice(0, 10)) || '<span class="faint">ولا مرة</span>'}</span>`, v: (r) => r.last_pay },
+    { t: '', noCsv: 1, f: (r) => `<span class="row" style="flex-wrap:nowrap">${can('customers') ? '<button class="btn sm ok" data-act="pay">تحصيل</button>' : ''}<button class="btn sm" data-act="st">كشف</button>${r.phone ? '<button class="btn sm" data-act="wa" title="رسالة تذكير بالسداد">💬</button>' : ''}</span>` },
+  ];
+  let list = [];
+  const filter = () => {
+    list = rows.filter((r) => (!st.q || partyMatch(r, st.q)) && (!st.over || r.overdue > 0) && (!st.rep || String(r.rep_id) === String(st.rep)));
+    mountTable($('#ctb', box), cols, list, { empty: 'مفيش مديونيات 👌', rowCls: (r) => (r.overdue > 0 ? 'warnrow' : ''), foot: null, act: (a, r) => {
+      const c = { ...r };
+      if (a === 'pay') return paymentForm('customer', c, () => route());
+      if (a === 'st') return statement('customer', c);
+      if (a === 'wa') openWhatsApp(r.phone, `السلام عليكم أ/ ${r.name}\nنحيط سيادتكم علماً بأن الرصيد المستحق لدى ${S.settings.company_name || branchOf(r.branch_id).name} هو ${money(r.balance)} ج.م${r.overdue > 0 ? `، منها ${money(r.overdue)} ج.م متأخرة عن ميعاد السداد` : ''}.\nبرجاء التكرم بالسداد في أقرب وقت. شكراً لتعاملكم معنا 🌷`);
+    } });
+  };
+  $('#cq', box).oninput = debounce((e) => { st.q = e.target.value.trim(); filter(); }, 150);
+  $('#cr', box).onchange = (e) => { st.rep = e.target.value; filter(); };
+  $('#co', box).onchange = (e) => { st.over = e.target.checked; filter(); };
+  $('#ccsv', box).onclick = () => exportCSV('أعمار-الديون', cols, list);
+  $('#cprn', box).onclick = () => printReport('أعمار ديون العملاء', `${new Date().toLocaleDateString('en-GB')} — إجمالي ${money(sum('balance', list))}`, tableHTML(cols.filter((c) => !c.noCsv), list));
+  filter();
+}
+async function whReps(box) {
+  const st = S.whRep || (S.whRep = newRange('month'));
+  box.innerHTML = `<div class="toolbar">${rangeHTML(st)}<span class="sp"></span><button class="btn pri" id="rnew">${icon('plus')}مندوب جديد</button><button class="btn" id="rcsv">${icon('download')}Excel</button></div><div class="grid g4" id="rsum" style="margin-bottom:14px"></div><div id="rtb"></div>
+    <p class="small muted">العمولة = (المبيعات − المرتجعات) × نسبة المندوب. المندوب بيتحدد في الفاتورة، أو بيتاخد لوحده من المندوب المسؤول عن العميل.</p>`;
+  let rows = [];
+  const cols = [
+    { t: 'المندوب', f: (r) => `<b>${esc(r.name)}</b>${r.phone ? `<div class="small faint num">${esc(r.phone)}</div>` : ''}${r.active ? '' : ' <span class="badge">موقوف</span>'}`, v: (r) => r.name },
+    { t: 'نسبته', n: 1, f: (r) => `${+r.pct || 0}%`, v: (r) => r.pct }, { t: 'عملاؤه', n: 1, k: 'customers' }, { t: 'فواتير', n: 1, k: 'count' },
+    { t: 'المبيعات', n: 1, f: (r) => M(r.sales), v: (r) => r.sales }, { t: 'المرتجعات', n: 1, f: (r) => (r.returns ? M(r.returns, 'bad') : ''), v: (r) => r.returns },
+    { t: 'الصافي', n: 1, f: (r) => `<b>${M(r.sales - r.returns)}</b>`, v: (r) => r2(r.sales - r.returns) },
+    { t: 'العمولة', n: 1, f: (r) => `<b>${M(r2(((r.sales - r.returns) * (+r.pct || 0)) / 100), 'ok')}</b>`, v: (r) => r2(((r.sales - r.returns) * (+r.pct || 0)) / 100) },
+    { t: 'مديونية عملائه', n: 1, f: (r) => (r.debt ? M(r.debt, 'warn') : ''), v: (r) => r.debt },
+    { t: '', noCsv: 1, f: () => '<button class="btn sm" data-act="ed">تعديل</button>' },
+  ];
+  const form = (r) => modal({ title: r ? 'تعديل مندوب' : 'مندوب جديد', body: `<div class="grid g2"><div class="field"><label class="f">الاسم *</label><input class="in" name="name" value="${esc(r ? r.name : '')}"></div>
+      <div class="field"><label class="f">الموبايل</label><input class="in" name="phone" dir="ltr" value="${esc(r ? r.phone || '' : '')}"></div>
+      <div class="field"><label class="f">نسبة العمولة %</label><input class="in" type="number" step="any" min="0" max="50" name="pct" value="${r ? r.pct || '' : ''}"></div>
+      <div class="field"><label class="f">ملاحظات</label><input class="in" name="notes" value="${esc(r ? r.notes || '' : '')}"></div>${r ? `<label class="chk"><input type="checkbox" name="active" ${r.active ? 'checked' : ''}> نشط</label>` : ''}</div>`,
+    buttons: [{ t: 'حفظ', cls: 'pri', fn: async (mb) => { const v = fv(mb); if (r) v.active = !!$('[name=active]', mb).checked; r ? await PUT('/api/reps/' + r.id, v) : await POST('/api/reps', v); toast('اتحفظ ✓', 'ok'); load(); } }, { t: 'إلغاء' }] });
+  const load = async () => {
+    rows = await GET('/api/reps', bq({ from: st.from, to: st.to, all: 1 }));
+    const s = (f) => rows.reduce((a, r) => a + f(r), 0);
+    $('#rsum', box).innerHTML = stat('مبيعات المناديب', M(s((r) => r.sales)), rangeLabel(st), 'ok', 'cart', '#059669') + stat('المرتجعات', M(s((r) => r.returns)), '', '', 'receipt', '#dc2626')
+      + stat('إجمالي العمولات', M(s((r) => ((r.sales - r.returns) * (+r.pct || 0)) / 100)), '', '', 'coins', '#7c3aed') + stat('مديونية عملائهم', M(s((r) => +r.debt || 0)), '', 'warn', 'wallet', '#d97706');
+    mountTable($('#rtb', box), cols, rows, { empty: 'مفيش مناديب — ضيف أول مندوب', act: (a, r) => form(r) });
+  };
+  bindRange(box, st, load);
+  $('#rnew', box).onclick = () => form(null);
+  $('#rcsv', box).onclick = () => exportCSV('المناديب', cols, rows);
+  await load();
+}
+async function whDeliv(box) {
+  const st = S.whDlv || (S.whDlv = { status: '' });
+  box.innerHTML = `<div class="toolbar"><div class="seg" id="ds">${[['', 'الحالية'], ['pending', 'مستني'], ['out', 'خرج للتوصيل'], ['delivered', 'اتسلم']].map(([k, x]) => `<button data-s="${k}" class="${st.status === k ? 'on' : ''}">${x}</button>`).join('')}</div><span class="sp"></span></div>
+    <p class="small muted" style="margin:0 0 10px">أي فاتورة (جملة أو عادية) متعلّم عليها "توصيل" بتظهر هنا. "الحالية" = اللي لسه ماتسلمتش + اللي اتسلمت آخر 3 أيام.</p><div id="dtb"></div>`;
+  const load = async () => {
+    const rows = await GET('/api/wholesale/deliveries', bq({ status: st.status }));
+    mountTable($('#dtb', box), [
+      { t: 'الفاتورة', f: (r) => `<b class="num">${esc(r.doc_no)}</b><div class="small faint">${dt(r.date)}</div>` },
+      ...(showBranchCol() ? [{ t: 'المعرض', f: (r) => brName(r.branch_id) }] : []),
+      { t: 'العميل', f: (r) => `<b>${esc(r.customer || '')}</b>${r.phone ? `<div class="small faint num">${esc(r.phone)}</div>` : ''}` },
+      { t: 'العنوان', f: (r) => esc(r.delivery_addr || '') }, { t: 'السواق', f: (r) => esc(r.delivery_driver || '') }, { t: 'أصناف', n: 1, k: 'items' },
+      { t: 'القيمة', n: 1, f: (r) => `${M(r.total)}${r.total - r.paid > 0.009 ? `<div class="small warn">آجل ${money(r.total - r.paid)}</div>` : ''}` },
+      { t: 'الحالة', f: (r) => `<span class="badge ${(DELIV[r.delivery_status] || [])[1] || ''}">${(DELIV[r.delivery_status] || [r.delivery_status])[0]}</span>${r.delivered_at ? `<div class="small faint num">${esc(r.delivered_at.slice(0, 16))}</div>` : ''}` },
+      { t: '', f: (r) => `<span class="row" style="flex-wrap:nowrap">${r.delivery_status === 'pending' ? '<button class="btn sm pri" data-act="out">خرج</button>' : ''}${r.delivery_status !== 'delivered' ? '<button class="btn sm ok" data-act="done">اتسلم</button>' : ''}<button class="btn sm" data-act="note">📦 إذن</button><button class="btn sm ghost" data-act="open">فتح</button>${r.phone ? '<button class="btn sm ghost" data-act="wa" title="بلّغ العميل">💬</button>' : ''}</span>` },
+    ], rows, { empty: 'مفيش طلبات توصيل', act: async (a, r) => {
+      try {
+        if (a === 'open') return saleModal(r.id, load);
+        if (a === 'note') return printDeliveryNote(r);
+        if (a === 'wa') return openWhatsApp(r.phone, `السلام عليكم أ/ ${r.customer}\nطلبكم (فاتورة ${r.doc_no}) ${r.delivery_status === 'delivered' ? 'اتسلم' : r.delivery_status === 'out' ? 'خرج للتوصيل' + (r.delivery_driver ? ' مع ' + r.delivery_driver : '') + ' وهيوصلكم قريب' : 'جاهز وهيخرج للتوصيل قريب'}. شكراً لتعاملكم معنا 🌷`);
+        if (a === 'out') { const d = await promptBox('خرج للتوصيل', 'اسم السواق / العربية:', r.delivery_driver || ''); if (d === null) return; await POST(`/api/sales/${r.id}/delivery`, { status: 'out', driver: d }); toast('اتعلّم: خرج للتوصيل', 'ok'); }
+        if (a === 'done') { await POST(`/api/sales/${r.id}/delivery`, { status: 'delivered' }); toast('اتسلم ✓', 'ok'); }
+        load();
+      } catch (e) { toast(e.message, 'bad'); }
+    } });
+  };
+  $$('#ds button', box).forEach((b) => (b.onclick = () => { st.status = b.dataset.s; $$('#ds button', box).forEach((x) => x.classList.toggle('on', x === b)); load(); }));
+  await load();
+}
 /* ---------- النقاشين والعمولات ---------- */
 VIEWS.agents = async (el) => {
   el.innerHTML = `<div class="toolbar"><input class="in" id="aq" placeholder="بحث بالاسم أو الموبايل" style="width:240px"><span class="sp"></span><button class="btn pri" id="anew">${icon('plus')}نقاش جديد</button><button class="btn" id="acsv">${icon('download')}Excel</button></div>
@@ -2988,7 +3248,7 @@ VIEWS.reports = async (el) => {
 /* =====================================================================
    المستخدمين
    ===================================================================== */
-const PERMS = [['change_price', 'تعديل سعر البيع في الكاشير'], ['credit_sale', 'البيع الآجل'], ['returns', 'عمل مرتجع مبيعات'], ['customers', 'العملاء وسندات القبض'], ['suppliers', 'الموردين وسندات الصرف'], ['purchases', 'فواتير المشتريات'], ['expenses', 'تسجيل المصروفات'], ['loans', 'السلف والاقتراض (من المعرض التاني أو جهة برّه)'], ['products', 'إضافة وتعديل الأصناف والأسعار'], ['stock', 'الجرد وتسوية المخزون'], ['treasury', 'الخزينة والبنك'], ['reports', 'التقارير ولوحة التحكم الكاملة'], ['see_cost', 'رؤية التكلفة والأرباح'], ['documents', 'المطبوعات (إيصالات، أذون تسليم، تفويضات، عروض رسمية)'], ['commissions', 'عمولات النقاشين والخصم الخفي (مش بيظهروا في الفاتورة)']];
+const PERMS = [['change_price', 'تعديل سعر البيع في الكاشير'], ['credit_sale', 'البيع الآجل'], ['returns', 'عمل مرتجع مبيعات'], ['customers', 'العملاء وسندات القبض'], ['suppliers', 'الموردين وسندات الصرف'], ['purchases', 'فواتير المشتريات'], ['expenses', 'تسجيل المصروفات'], ['loans', 'السلف والاقتراض (من المعرض التاني أو جهة برّه)'], ['products', 'إضافة وتعديل الأصناف والأسعار'], ['stock', 'الجرد وتسوية المخزون'], ['treasury', 'الخزينة والبنك'], ['reports', 'التقارير ولوحة التحكم الكاملة'], ['see_cost', 'رؤية التكلفة والأرباح'], ['documents', 'المطبوعات (إيصالات، أذون تسليم، تفويضات، عروض رسمية)'], ['commissions', 'عمولات النقاشين والخصم الخفي (مش بيظهروا في الفاتورة)'], ['wholesale', 'البيع بالجملة (فواتير الجملة، مستويات أسعار العملاء، المناديب، التوصيل، التحصيل)']];
 const PERM_PRESETS = {
   basic: { t: 'كاشير عادي', hint: 'بيع ومرتجع وعملاء ومصروفات بسيطة — خصم لحد 5%', p: { max_discount: 5, credit_sale: true, returns: true, customers: true, expenses: true } },
   trusted: { t: 'كاشير موثوق / مشرف', hint: 'زيادة: تعديل السعر، المشتريات، الجرد، الأصناف — خصم لحد 10%', p: { max_discount: 10, change_price: true, credit_sale: true, returns: true, customers: true, suppliers: true, purchases: true, expenses: true, products: true, stock: true } },
