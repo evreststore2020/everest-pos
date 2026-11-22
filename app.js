@@ -1161,26 +1161,35 @@ const actCols = (compact) => [
   ...camCol(),
 ];
 /* ---------- الكاميرات: مراجعة التسجيل وقت أي عملية ---------- */
-const camCfg = (br) => (S.settings.cameras || {})[br] || {};
-const camAny = () => Object.values(S.settings.cameras || {}).some((c) => c && (c.url || c.name));
-function camOpen(br) {
-  const c = camCfg(br);
-  if (c.url) { window.open(c.url, '_blank', 'noopener'); return true; }
+// أنظمة الكاميرات: كل نظام (معرض جوتن، معرض باكين…) ليه رابط وفرق ساعة، ومربوط بالكاشيرية اللي شغالين قدامه
+const camSystems = () => {
+  const c = S.settings.cameras || {};
+  if (Array.isArray(c.systems)) return c.systems;
+  return Object.entries(c).filter(([, v]) => v && typeof v === 'object').map(([br, v]) => ({ label: (branchOf(+br) || {}).name || 'الكاميرات', url: v.url || '', name: v.name || '', offset: +v.offset || 0, users: [] })); // الشكل القديم (كاميرا لكل معرض)
+};
+// الكاميرا المناسبة: النظام المربوط بالكاشير اللي عمل العملية، ولو مفيش ← أول نظام
+const camFor = (userId) => { const L = camSystems(); return L.find((x) => (x.users || []).includes(+userId)) || L[0] || {}; };
+const camCfg = (br, userId) => camFor(userId);
+const camAny = () => camSystems().some((c) => c && (c.url || c.name));
+function camOpen(c) {
+  if (c && c.url) { window.open(c.url, '_blank', 'noopener'); return true; }
   toast('افتح تطبيق الكاميرات على الموبايل — أو حط رابط الكاميرات من الإعدادات ← الكاميرات', 'warn'); return false;
 }
 // date بصيغة 'YYYY-MM-DD HH:MM:SS' (توقيت المعرض) — offset = فرق ساعة جهاز التسجيل بالدقايق
-function camModal(br, date, what) {
-  const c = camCfg(br); const b = branchOf(br);
+function camModal(br, date, what, userId, sysIdx) {
+  const L = camSystems(); const c = sysIdx != null ? L[sysIdx] || {} : camFor(userId); const b = branchOf(br) || {};
   const [d, t] = String(date || '').split(' '); const [Y, Mo, D] = (d || '').split('-').map(Number); const [h, mi, s] = (t || '0:0:0').split(':').map(Number);
   const at = new Date(Y, Mo - 1, D, h, mi, s || 0); at.setMinutes(at.getMinutes() + (+c.offset || 0));
   const hm = (x) => x.toLocaleTimeString('ar-EG', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
   const from = new Date(at - 60e3), to = new Date(+at + 60e3);
   const dayTxt = at.toLocaleDateString('ar-EG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   const plain = `${ymd(at)} ${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`;
-  modal({
+  const cm = modal({
     title: '🎥 راجع الكاميرا وقت العملية',
     body: `<div style="text-align:center">
-      <div class="small muted">${esc(what || 'عملية')} — ${brName(br) || esc(b.name || '')}</div>
+      <div class="small muted">${esc(what || 'عملية')}</div>
+      ${c.label ? `<div style="margin-top:6px"><b style="font-size:16px">📍 ${esc(c.label)}</b></div>` : ''}
+      ${L.length > 1 ? `<div class="row" style="justify-content:center;gap:6px;margin-top:6px;flex-wrap:wrap">${L.map((x, i) => `<button type="button" class="btn sm ${x === c ? 'pri' : 'ghost'}" data-sys="${i}">${esc(x.label)}</button>`).join('')}</div>` : ''}
       <div style="font-size:15px;margin-top:10px">${esc(dayTxt)}</div>
       <div class="num" style="font-size:40px;font-weight:800;margin:4px 0" dir="ltr">${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}</div>
       <div class="small muted">ارجع في التسجيل من <b>${esc(hm(from))}</b> لـ <b>${esc(hm(to))}</b></div>
@@ -1188,22 +1197,24 @@ function camModal(br, date, what) {
       ${c.offset ? `<div class="small faint" style="margin-top:8px">الوقت متعدّل ${c.offset > 0 ? '+' : ''}${c.offset} دقيقة على ساعة جهاز التسجيل</div>` : ''}
       ${c.url ? '' : `<div class="small warn" style="margin-top:12px">افتح تطبيق الكاميرات وروح للوقت ده. (تقدر تحط رابط الكاميرات من <a href="#/settings" data-close>الإعدادات</a> عشان يتفتح بدوسة)</div>`}</div>`,
     buttons: [
-      ...(c.url ? [{ t: '📹 افتح الكاميرات', cls: 'pri', fn: () => { camOpen(br); return false; } }] : []),
+      ...(c.url ? [{ t: '📹 افتح الكاميرات', cls: 'pri', fn: () => { camOpen(c); return false; } }] : []),
       { t: '📋 نسخ الوقت', fn: () => { try { navigator.clipboard.writeText(plain); toast('اتنسخ: ' + plain, 'ok'); } catch {} return false; } },
       { t: 'إغلاق' },
     ],
   });
+  // التبديل بين أنظمة الكاميرات (لو الكاشير اتنقل أو عايز تشوف المعرض التاني)
+  $$('[data-sys]', cm.mb).forEach((x) => (x.onclick = () => { cm.close(); camModal(br, date, what, userId, +x.dataset.sys); }));
 }
 const camCol = () => (isAdmin() ? [{ t: '', noCsv: 1, f: () => '<button class="btn ghost sm" data-act="cam" title="راجع الكاميرا وقت العملية">🎥</button>' }] : []);
-const actAct = (a, r) => { if (a === 'cam') camModal(r.branch_id, r.date, ((ACT_T[r.type] || [r.type])[0]) + (r.doc_no ? ' ' + r.doc_no : '') + (r.user_name ? ' — ' + r.user_name : '')); };
+const actAct = (a, r) => { if (a === 'cam') camModal(r.branch_id, r.date, ((ACT_T[r.type] || [r.type])[0]) + (r.doc_no ? ' ' + r.doc_no : '') + (r.user_name ? ' — ' + r.user_name : ''), r.user_id); };
 function camListModal() {
   modal({
     title: '📹 الكاميرات',
-    body: `<div class="grid" style="gap:10px">${S.branches.map((b) => { const c = camCfg(b.id); return `<div class="row" style="padding:12px;border:1px solid var(--line, #e5e7eb);border-radius:10px"><span class="dot" style="background:${esc(b.color)}"></span><b>${esc(b.name)}</b>${c.name ? `<span class="small muted">${esc(c.name)}</span>` : ''}<span class="sp"></span>${c.url ? `<button class="btn pri sm" data-camo="${b.id}">افتح</button>` : '<span class="small faint">مفيش رابط</span>'}</div>`; }).join('')}
+    body: `<div class="grid" style="gap:10px">${camSystems().map((c, i) => `<div class="row" style="padding:12px;border:1px solid var(--line, #e5e7eb);border-radius:10px"><b>📍 ${esc(c.label)}</b>${c.name ? `<span class="small muted">${esc(c.name)}</span>` : ''}<span class="sp"></span>${c.url ? `<button class="btn pri sm" data-camo="${i}">افتح</button>` : '<span class="small faint">مفيش رابط</span>'}</div>`).join('') || '<div class="faint">مفيش كاميرات متسجلة</div>'}
       <div class="small muted">💡 من الحركة المباشرة أو أي فاتورة دوس 🎥 يطلعلك الوقت بالظبط اللي تراجعه في التسجيل. الروابط بتتظبط من <a href="#/settings" data-close>الإعدادات ← الكاميرات</a>.</div></div>`,
     buttons: [{ t: 'إغلاق' }],
   });
-  $$('[data-camo]').forEach((x) => (x.onclick = () => camOpen(+x.dataset.camo)));
+  $$('[data-camo]').forEach((x) => (x.onclick = () => camOpen(camSystems()[+x.dataset.camo])));
 }
 const actClick = (r) => (r.type === 'sale' || r.type === 'return' ? saleModal(r.ref_id) : r.type === 'purchase' || r.type === 'purchase_return' ? purchaseModal(r.ref_id) : null);
 function methodCards(list) {
@@ -1694,7 +1705,7 @@ async function saleModal(id, onChange) {
       { t: '💬 واتساب', fn: () => { sendSaleWhatsApp(s); return false; } },
       ...(isSale && (s.channel === 'wholesale' || s.delivery_status) ? [{ t: '📦 إذن تسليم', fn: () => { printDeliveryNote(s); return false; } }] : []),
       ...(isSale && can('documents') ? [{ t: '📄 على ورق الشركة', fn: () => { docForm('quote', { _br: s.branch_id, _phone: s.cust_phone || '', to: s.cust_name || s.customer_name || '', items: s.items.map((i) => ({ desc: i.name, unit: '', qty: i.qty, price: i.price })), discount: s.discount || 0, subject: `فاتورة رقم ${s.doc_no}` }); return false; } }] : []),
-      ...(isAdmin() ? [{ t: '🎥 الكاميرا', fn: () => { camModal(s.branch_id, s.date, `${isSale ? 'فاتورة بيع' : 'مرتجع'} ${s.doc_no} — ${s.user_name || ''}`); return false; } }] : []),
+      ...(isAdmin() ? [{ t: '🎥 الكاميرا', fn: () => { camModal(s.branch_id, s.date, `${isSale ? 'فاتورة بيع' : 'مرتجع'} ${s.doc_no} — ${s.user_name || ''}`, s.user_id); return false; } }] : []),
       ...(isSale && s.status === 'ok' && can('returns') ? [{ t: 'عمل مرتجع', fn: (mb, close) => { close(); returnModal(s, onChange); } }] : []),
       ...(isAdmin() && s.status === 'ok' ? [{ t: 'إلغاء الفاتورة', cls: 'bad', fn: async (mb, close) => { const r = await promptBox('إلغاء الفاتورة', 'سبب الإلغاء (المخزون والخزينة هيرجعوا زي ما كانوا):'); if (r == null) return false; await POST(`/api/sales/${s.id}/void`, { reason: r }); toast('تم إلغاء الفاتورة', 'ok'); dropCache(); close(); onChange && onChange(); } }] : []),
       { t: 'إغلاق' },
@@ -3599,10 +3610,7 @@ VIEWS.settings = async (el) => {
     <div class="card" style="margin-bottom:16px"><div class="hd">🖼 لوجو الفاتورة</div><div class="bd row" style="gap:12px;flex-wrap:wrap"><span class="muted" style="flex:1;min-width:220px">حط لوجو الشركة أو لوجو مخصوص لكل معرض فوق فاتورة البيع (الحرارية و A4) وعرض السعر — ومعاه لوجوهات التوكيلات (جوتن، باكين…) لو حابب.</span><span id="ilst" class="small"></span><button class="btn pri" id="ilbtn">🖼 إعداد لوجو الفاتورة</button></div></div>
     <div class="card" style="margin-bottom:16px"><div class="hd">📹 الكاميرات</div><div class="bd" id="camset">
       <p class="muted" style="margin-top:0">من أي عملية في الحركة المباشرة أو أي فاتورة دوس <b>🎥</b> يطلعلك الوقت بالظبط عشان تراجعه في تسجيل الكاميرات. الرابط اختياري: لو حطيته، زرار "افتح الكاميرات" هيفتحه على طول (صفحة جهاز التسجيل أو رابط التطبيق).</p>
-      <div class="grid g2">${brs.map((b) => { const c = (S.settings.cameras || {})[b.id] || {}; return `<div data-cam="${b.id}" style="padding:12px;border:1px solid var(--line, #e5e7eb);border-radius:10px"><div style="margin-bottom:8px"><span class="dot" style="background:${esc(b.color)}"></span><b>${esc(b.name)}</b></div>
-        <div class="field"><label class="f">رابط فتح الكاميرات (اختياري)</label><input class="in" name="url" value="${esc(c.url || '')}" dir="ltr" placeholder="http://192.168.1.64  أو رابط التطبيق"></div>
-        <div class="grid g2"><div class="field"><label class="f">كاميرا الكاشير</label><input class="in" name="name" value="${esc(c.name || '')}" placeholder="مثال: قناة 2 — فوق الكاشير"></div>
-        <div class="field"><label class="f">فرق ساعة التسجيل (دقايق)</label><input class="in" type="number" name="offset" value="${+c.offset || 0}" min="-720" max="720" step="1"></div></div></div>`; }).join('')}</div>
+      <div class="grid g2" id="camsys"></div><button class="btn sm" id="camadd" type="button" style="margin-top:10px">＋ إضافة معرض / نظام كاميرات تاني</button>
       <div class="small faint" style="margin:8px 0 12px">💡 لو ساعة جهاز التسجيل سابقة 3 دقايق اكتب 3، ولو متأخرة 3 اكتب ‎-3، عشان الوقت اللي يطلعلك يبقى مظبوط على التسجيل.</div>
       <button class="btn pri" id="camsave">حفظ إعدادات الكاميرات</button></div></div>    <div class="grid g2"><div class="card"><div class="hd">إعدادات عامة</div><div class="bd" id="gs">
       <div class="field"><label class="f">اسم الشركة (يظهر في الفواتير والتقارير)</label><input class="in" name="company_name" value="${esc(S.settings.company_name)}"></div>
@@ -3640,8 +3648,26 @@ VIEWS.settings = async (el) => {
   const ilState = async () => { const c = await invLogo(true); $('#ilst', el).innerHTML = c.on ? '<span class="badge ok">شغّال</span>' : '<span class="badge">مقفول</span>'; };
   ilState(); $('#ilbtn', el).onclick = () => invoiceLogoForm(brs, ilState);
   $('#catbtn', el).onclick = () => catalogManager();
+  // أنظمة الكاميرات: كل معرض/جهاز تسجيل لوحده ومربوط بالكاشير اللي شغال قدامه
+  const camState = camSystems().map((x) => ({ ...x, users: [...(x.users || [])] })); if (!camState.length) camState.push({ label: 'معرض جوتن', url: '', name: '', offset: 0, users: [] });
+  const camUsers = (await GET('/api/users').catch(() => [])).filter((u) => u.role !== 'admin' && u.active);
+  const camRead = () => $$('[data-cs]', el).forEach((box) => { const x = camState[+box.dataset.cs]; x.label = $('[name=label]', box).value.trim(); x.url = $('[name=url]', box).value.trim(); x.name = $('[name=name]', box).value.trim(); x.offset = +$('[name=offset]', box).value || 0; x.users = $$('[data-cu]:checked', box).map((i) => +i.dataset.cu); });
+  const camRender = () => {
+    $('#camsys', el).innerHTML = camState.map((c, i) => `<div data-cs="${i}" style="padding:12px;border:1px solid var(--line, #e5e7eb);border-radius:10px">
+      <div class="row" style="flex-wrap:nowrap;gap:6px;margin-bottom:8px"><span style="font-size:18px">📍</span><input class="in" name="label" value="${esc(c.label || '')}" placeholder="اسم المكان — مثال: معرض باكين" style="font-weight:800">${camState.length > 1 ? `<button type="button" class="btn ghost sm bad" data-cdel="${i}" title="حذف">🗑</button>` : ''}</div>
+      <div class="field"><label class="f">رابط فتح الكاميرات (اختياري)</label><input class="in" name="url" value="${esc(c.url || '')}" dir="ltr" placeholder="http://192.168.1.64  أو رابط التطبيق"></div>
+      <div class="grid g2"><div class="field"><label class="f">كاميرا الكاشير</label><input class="in" name="name" value="${esc(c.name || '')}" placeholder="مثال: قناة 2 — فوق الكاشير"></div>
+      <div class="field"><label class="f">فرق ساعة التسجيل (دقايق)</label><input class="in" type="number" name="offset" value="${+c.offset || 0}" min="-720" max="720" step="1"></div></div>
+      <div class="field"><label class="f">الكاشيرية اللي شغالين هنا <span class="faint">(🎥 على فواتيرهم بيفتح الكاميرات دي)</span></label><div class="row" style="gap:10px;flex-wrap:wrap">${camUsers.map((u) => `<label class="chk"><input type="checkbox" data-cu="${u.id}" ${(c.users || []).includes(u.id) ? 'checked' : ''}> ${esc(u.name)}</label>`).join('') || '<span class="small faint">مفيش كاشيرية</span>'}</div></div></div>`).join('');
+    $$('[data-cdel]', el).forEach((b) => (b.onclick = () => { camRead(); camState.splice(+b.dataset.cdel, 1); camRender(); }));
+    // الكاشير يتربط بمكان واحد بس
+    $$('[data-cu]', el).forEach((b) => (b.onchange = () => { if (b.checked) $$(`[data-cu="${b.dataset.cu}"]`, el).forEach((o) => { if (o !== b) o.checked = false; }); }));
+  };
+  camRender();
+  $('#camadd', el).onclick = () => { camRead(); camState.push({ label: camState.length === 1 ? 'معرض باكين' : '', url: '', name: '', offset: 0, users: [] }); camRender(); };
   $('#camsave', el).onclick = async () => {
-    const cameras = {}; $$('[data-cam]', el).forEach((box) => { cameras[box.dataset.cam] = { url: $('[name=url]', box).value.trim(), name: $('[name=name]', box).value.trim(), offset: +$('[name=offset]', box).value || 0 }; });
+    camRead(); if (camState.some((c) => !c.label)) return toast('اكتب اسم المكان لكل نظام كاميرات', 'bad');
+    const cameras = { systems: camState };
     try { await PUT('/api/settings', { cameras }); const me = await GET('/api/me'); S.settings = me.settings; toast('تم حفظ إعدادات الكاميرات', 'ok'); route(); } catch (e) { toast(e.message, 'bad'); }
   };  $('#gsave', el).onclick = async () => {
     const v = fv($('#gs', el));
