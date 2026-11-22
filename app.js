@@ -3522,6 +3522,7 @@ const PERM_PRESETS = {
   basic: { t: 'كاشير عادي', hint: 'بيع ومرتجع وعملاء ومصروفات بسيطة — خصم لحد 5%', p: { max_discount: 5, credit_sale: true, returns: true, customers: true, expenses: true } },
   trusted: { t: 'كاشير موثوق / مشرف', hint: 'زيادة: تعديل السعر، المشتريات، الجرد، الأصناف — خصم لحد 10%', p: { max_discount: 10, change_price: true, credit_sale: true, returns: true, customers: true, suppliers: true, purchases: true, expenses: true, products: true, stock: true } },
   sales: { t: 'بيع بس', hint: 'بيع كاش فقط بدون آجل أو مرتجع أو خصم', p: { max_discount: 0 } },
+  accountant: { t: 'محاسب', hint: 'التقارير والأرباح، الخزينة والبنك، العملاء والموردين والتحصيل، المشتريات والمصروفات والسلف، المطبوعات، والتحصيل وأعمار الديون — من غير تعديل أسعار أو أصناف ومن غير خصم', p: { max_discount: 0, reports: true, see_cost: true, treasury: true, customers: true, suppliers: true, purchases: true, expenses: true, loans: true, documents: true, wholesale: true } },
 };
 // جدول الصلاحيات: صف لكل صلاحية وعمود لكل كاشير
 function permMatrix(box, cashiers) {
