@@ -1828,7 +1828,7 @@ function productForm(p, onSave, list) {
     body: `<datalist id="dlc">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist><datalist id="dlu">${(S.settings.units || []).map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
       <div class="grid g2"><div class="field" style="grid-column:1/-1"><label class="f">اسم الصنف *</label><input class="in" name="name" value="${esc(p.name)}"></div>
       <div class="field"><label class="f">الكود (يتولد تلقائياً لو فاضي)</label><input class="in" name="code" value="${esc(p.code)}" dir="ltr"></div>
-      <div class="field"><label class="f">الباركود</label><div class="row" style="flex-wrap:nowrap;gap:6px"><input class="in" name="barcode" value="${esc(p.barcode)}" dir="ltr" placeholder="امسح الباركود هنا" style="flex:1">${camBtn('bcam')}</div></div>
+      <div class="field"><label class="f">الباركود</label><div class="row" style="flex-wrap:nowrap;gap:6px"><input class="in" name="barcode" value="${esc(p.barcode)}" dir="ltr" placeholder="امسح الباركود هنا" style="flex:1">${camBtn('bcam')}<button type="button" class="btn" id="bgen" title="العبوة معندهاش باركود؟ اعمل لها رقم باركود جديد واطبعه ملصق">🔢</button></div></div>
       <div class="field"><label class="f">التصنيف</label><input class="in" name="category" list="dlc" value="${esc(p.category)}"></div>
       <div class="field"><label class="f">الوحدة</label><input class="in" name="unit" list="dlu" value="${esc(p.unit)}"></div>
       <div class="field"><label class="f">الشركة / الماركة</label><input class="in" name="brand" list="dlb" value="${esc(p.brand)}" placeholder="جوتن، باكين، سايبس… أو اتركها فاضية للعدة"><datalist id="dlb">${brandSuggestions(list).map((c) => `<option value="${esc(c)}">`).join('')}</datalist></div>
@@ -1882,6 +1882,7 @@ function productForm(p, onSave, list) {
     if (fin && e.key.length === 1) { clearTimeout(fin); fin = null; }
   });
   bi.addEventListener('change', () => { if (!fin) bi.value = codeFromScan(bi.value); });
+  $('#bgen', pm.mb).onclick = async () => { if (bi.value.trim() && !(await confirmBox('الصنف عليه باركود — تغيّره برقم جديد؟ (الملصقات القديمة مش هتتقري)', 'غيّره', 'bad'))) return; bi.value = newEan13((list || S.cache['p' + curBranch()] || []).map((x) => x.barcode).filter(Boolean)); hint.innerHTML = '<span class="ok">✓ رقم باركود جديد — احفظ الصنف، وبعدين اطبعله ملصق من "ملصقات باركود"</span>'; };
   if ($('#bcam', pm.mb)) $('#bcam', pm.mb).onclick = () => camScan((code) => { bi.value = code; finish(); }, { title: '📷 امسح باركود العبوة' });
   // لو المؤشر في خانة تانية والقارئ كتب (حروف سريعة جداً + Enter) ← ننقل اللي اتكتب لخانة الباركود ونرجّع الخانة زي ما كانت
   let burst = { t: 0, s: '', el: null, v0: '' };
@@ -1995,6 +1996,77 @@ function barcodeLabels(list) {
   $('#ball', mb).onclick = () => { list.forEach((p) => sel.has(p.id) || sel.set(p.id, 1)); render(); };
   $('#bnone', mb).onclick = () => { sel.clear(); render(); };
   render();
+}
+/* ---------- صانع باركود و QR (من جوه السيستم أو أي كلام من برّه) ---------- */
+// رقم باركود EAN-13 جديد للاستخدام الداخلي (بيبدأ بـ 2 — المدى المخصص للمحلات، مش هيتعارض مع باركود شركة)
+const ean13Check = (d12) => { let s = 0; for (let i = 0; i < 12; i++) s += +d12[i] * (i % 2 ? 3 : 1); return String((10 - (s % 10)) % 10); };
+function newEan13(used = []) {
+  for (let k = 0; k < 50; k++) { let d = '2'; for (let i = 0; i < 11; i++) d += Math.floor(Math.random() * 10); d += ean13Check(d); if (!used.some((u) => sameCode(u, d))) return d; }
+  throw new Error('جرّب تاني');
+}
+// QR كـ SVG (بيستخدم نفس مكتبة الكاميرا ZXing)
+async function qrSVG(text) {
+  await loadZXing(); const Z = window.ZXing;
+  const hints = new Map(); hints.set(Z.EncodeHintType.CHARACTER_SET, 'UTF-8'); hints.set(Z.EncodeHintType.MARGIN, 1); hints.set(Z.EncodeHintType.ERROR_CORRECTION, Z.QRCodeDecoderErrorCorrectionLevel.M);
+  const m = new Z.QRCodeWriter().encode(text, Z.BarcodeFormat.QR_CODE, 0, 0, hints); const w = m.getWidth(), h = m.getHeight();
+  let d = ''; for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (m.get(x, y)) d += `M${x} ${y}h1v1h-1z`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" shape-rendering="crispEdges" class="qr"><rect width="${w}" height="${h}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+}
+async function codeSVG(type, text, size) {
+  if (type === 'qr') return qrSVG(text);
+  await loadJsBarcode(); const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  JsBarcode(svg, text, { format: type === 'ean13' ? 'EAN13' : 'CODE128', height: size === 'roll' ? 36 : 46, width: size === 'roll' ? 1.3 : 1.6, fontSize: 11, margin: 0, displayValue: true });
+  return svg.outerHTML;
+}
+const LABEL_CSS = (size) => (size === 'a4'
+  ? `@page{size:A4;margin:8mm}body{margin:0}.sheet{display:grid;grid-template-columns:repeat(3,1fr);gap:0}.lb{height:35.5mm;padding:2mm 3mm;border:1px dashed #ccc;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;page-break-inside:avoid}.lb .qr{height:24mm;width:auto}`
+  : `@page{size:${size === 'roll' ? '38mm 25mm' : '50mm 30mm'};margin:0}body{margin:0}.lb{width:${size === 'roll' ? '38mm' : '50mm'};height:${size === 'roll' ? '25mm' : '30mm'};padding:1mm 1.5mm;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;page-break-after:always}.lb .qr{height:${size === 'roll' ? '16mm' : '20mm'};width:auto}`)
+  + `.nm{font-size:9px;font-weight:bold;text-align:center;line-height:1.2;max-height:2.4em;overflow:hidden;width:100%}.sb{font-size:8px;text-align:center;width:100%;overflow:hidden;white-space:nowrap}svg{max-width:100%;height:auto}`;
+function barcodeMaker() {
+  const QR_HINTS = { link: ['رابط', 'https://www.facebook.com/…'], text: ['كلام', 'أي كلام عربي أو إنجليزي'], phone: ['رقم موبايل (اتصال)', '01xxxxxxxxx'], wa: ['واتساب', '01xxxxxxxxx'], map: ['لوكيشن (رابط جوجل ماب)', 'https://maps.app.goo.gl/…'] };
+  const m = modal({ title: '🏷 باركود و QR', wide: 'wide', body: `
+    <div class="card" style="padding:10px 14px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="font-size:20px">📦</span><div class="sp"><b>ملصقات لأصناف السيستم</b><div class="small muted">باركود كل صنف (أو كوده لو معندوش) — اختار الأصناف والعدد</div></div><button class="btn pri" id="bmp" type="button">اختار الأصناف</button></div>
+    <div class="grid g2" style="gap:16px;align-items:start"><div>
+      <b>باركود أو QR حر</b> <span class="small faint">(لأي حاجة — رف، مخزن، فاتورة ورقي، رابط صفحتك…)</span>
+      <div class="field" style="margin-top:8px"><label class="f">النوع</label><select class="in" id="bt">${opt('c128', 'باركود عادي (أرقام وحروف)')}${opt('ean13', 'باركود منتج EAN-13 (13 رقم)')}${opt('qr', 'QR كود (روابط، كلام، موبايل، واتساب، لوكيشن)')}</select></div>
+      <div class="field" id="bqk" style="display:none"><label class="f">الـ QR فيه</label><select class="in" id="bq2">${Object.entries(QR_HINTS).map(([k, [t]]) => opt(k, t)).join('')}</select></div>
+      <div class="field"><label class="f">المحتوى *</label><div class="row" style="flex-wrap:nowrap;gap:6px"><input class="in" id="bv" dir="auto" style="flex:1" placeholder="مثال: A-12 أو 1023"><button class="btn" id="bgen" type="button" title="رقم باركود جديد مش مستخدم">🔢 رقم جديد</button></div><div id="berr" class="small bad" style="margin-top:4px"></div></div>
+      <div class="field"><label class="f">كلام فوق الكود <span class="faint">(اختياري)</span></label><input class="in" id="bt1" placeholder="مثال: رف الدهانات البلاستيك"></div>
+      <div class="field"><label class="f">سطر صغير تحت <span class="faint">(اختياري)</span></label><input class="in" id="bt2" placeholder="مثال: امسح وكلمنا واتساب"></div>
+      <div class="grid g2" style="gap:0 10px"><div class="field"><label class="f">المقاس</label><select class="in" id="bs">${opt('a4', 'ورقة A4 (3 × 8)')}${opt('roll', 'ملصقات 38×25 مم')}${opt('roll50', 'ملصقات 50×30 مم')}</select></div>
+        <div class="field"><label class="f">العدد</label><input class="in" type="number" id="bn" min="1" max="500" value="1"></div></div></div>
+      <div><div class="small muted" style="margin-bottom:6px">معاينة</div><div id="bpv" style="background:#fff;color:#000;border:1px dashed var(--line);border-radius:10px;min-height:170px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:14px;gap:4px"></div>
+        <div class="small faint" style="margin-top:6px">💡 جرّب تمسح المعاينة بالقارئ أو بكاميرا الموبايل قبل ما تطبع.</div></div></div>`,
+    buttons: [{ t: `${icon('print')} طباعة`, cls: 'pri', fn: async (mb) => {
+      const v = value(); if (!v) throw new Error('اكتب المحتوى');
+      const size = $('#bs', mb).value, n = Math.max(1, Math.min(500, +$('#bn', mb).value || 1));
+      const svg = await codeSVG($('#bt', mb).value, v, size);
+      const t1 = $('#bt1', mb).value.trim(), t2 = $('#bt2', mb).value.trim();
+      const one = `<div class="lb">${t1 ? `<div class="nm">${esc(t1)}</div>` : ''}${svg}${t2 ? `<div class="sb">${esc(t2)}</div>` : ''}</div>`;
+      printHTML(`<div class="sheet">${Array(n).fill(one).join('')}</div>`, false, LABEL_CSS(size)); return false;
+    } }, { t: 'إغلاق' }] });
+  const mb = m.mb;
+  // المحتوى الفعلي اللي هيتحط في الكود (الموبايل والواتساب بيتحولوا لصيغة الـ QR)
+  const value = () => {
+    let v = $('#bv', mb).value.trim(); if (!v) return '';
+    if ($('#bt', mb).value === 'qr') { const k = $('#bq2', mb).value; if (k === 'phone') v = 'tel:+' + waPhone(v); if (k === 'wa') v = 'https://wa.me/' + waPhone(v); }
+    return v;
+  };
+  const preview = debounce(async () => {
+    const type = $('#bt', mb).value, v = value(); const pv = $('#bpv', mb); $('#berr', mb).textContent = '';
+    if (!v) { pv.innerHTML = '<span class="faint">اكتب المحتوى عشان تشوف الكود</span>'; return; }
+    try {
+      const svg = await codeSVG(type, v, 'a4'); const t1 = $('#bt1', mb).value.trim(), t2 = $('#bt2', mb).value.trim();
+      pv.innerHTML = `${t1 ? `<b style="font-size:12px">${esc(t1)}</b>` : ''}<div style="max-width:260px;width:100%;display:flex;justify-content:center">${svg.replace('class="qr"', 'class="qr" style="width:150px;height:150px"')}</div>${t2 ? `<span style="font-size:11px">${esc(t2)}</span>` : ''}`;
+    } catch (e) { pv.innerHTML = ''; $('#berr', mb).textContent = type === 'ean13' ? 'باركود EAN-13 لازم 12 أو 13 رقم صح — دوس "🔢 رقم جديد" يعملك واحد' : 'المحتوى ده مينفعش في النوع ده: ' + (e.message || e); }
+  }, 200);
+  const sync = () => { const qr = $('#bt', mb).value === 'qr'; $('#bqk', mb).style.display = qr ? '' : 'none'; $('#bgen', mb).style.display = qr ? 'none' : '';
+    $('#bv', mb).placeholder = qr ? QR_HINTS[$('#bq2', mb).value][1] : $('#bt', mb).value === 'ean13' ? '2xxxxxxxxxxxx' : 'مثال: A-12 أو 1023'; preview(); };
+  $('#bt', mb).onchange = sync; $('#bq2', mb).onchange = sync;
+  ['#bv', '#bt1', '#bt2'].forEach((s) => ($(s, mb).oninput = preview));
+  $('#bgen', mb).onclick = async () => { const used = (await products().catch(() => [])).map((p) => p.barcode).filter(Boolean); if ($('#bt', mb).value === 'c128') $('#bt', mb).value = 'ean13'; $('#bv', mb).value = newEan13(used); sync(); };
+  $('#bmp', mb).onclick = async () => { if (!curBranch()) return toast('اختار المعرض من فوق الأول', 'bad'); const list = await products(true); m.close(); barcodeLabels(list); };
+  sync();
 }
 /* ---------- استيراد قائمة أسعار من PDF / صور مع شاشة مراجعة ---------- */
 function priceImport(onDone) {
@@ -3892,7 +3964,7 @@ VIEWS.docs = async (el) => {
   const st = S.docSt || (S.docSt = { ...newRange('month'), kind: '', q: '' });
   const lh = await loadLH(true);
   el.innerHTML = `${!lh.name && isAdmin() ? `<div class="card" style="padding:12px 16px;margin-bottom:14px;background:var(--pri-soft);display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span style="font-size:22px">🎨</span><div class="sp"><b>ابدأ بورق الشركة</b><div class="small muted">ارفع اللوجو واختار الألوان واكتب العنوان والتليفونات — مرة واحدة، وكل المطبوعات هتطلع بيها.</div></div><button class="btn pri" id="lhGo">تجهيز ورق الشركة</button></div>` : ''}
-    <div class="row" style="margin-bottom:10px"><h3 style="margin:0">مستند جديد</h3><span class="sp"></span>${isAdmin() ? `<button class="btn" id="lhBtn">🎨 ورق الشركة (اللوجو والألوان والبيانات)</button>` : ''}</div>
+    <div class="row" style="margin-bottom:10px"><h3 style="margin:0">مستند جديد</h3><span class="sp"></span><button class="btn" id="bcBtn">🏷 باركود و QR</button>${isAdmin() ? `<button class="btn" id="lhBtn">🎨 ورق الشركة (اللوجو والألوان والبيانات)</button>` : ''}</div>
     <div class="dkinds">${Object.entries(DOCS).map(([k, v]) => `<button class="dkind" data-k="${k}" style="--tone:${v.tone}"><span class="di">${icon(v.ic)}</span><span><b>${v.t}</b><small>${v.d}</small></span></button>`).join('')}</div>
     <div class="row" style="margin:20px 0 10px"><h3 style="margin:0">الأرشيف</h3><span class="small muted">كل مستند بيتحفظ برقم مسلسل وتقدر تطبعه تاني أو تعمل نسخة منه</span></div>
     <div class="toolbar"><select class="in" id="dk" style="width:auto">${opt('', 'كل الأنواع', st.kind)}${Object.entries(DOCS).map(([k, v]) => opt(k, v.t, st.kind)).join('')}</select>${rangeHTML(st)}<input class="in" id="dq" placeholder="الرقم أو الاسم" value="${esc(st.q)}" style="width:200px"><span class="sp"></span><button class="btn" id="csv">${icon('download')}Excel</button></div><div id="tb"></div>`;
@@ -3903,6 +3975,7 @@ VIEWS.docs = async (el) => {
     { t: 'الحالة', f: (r) => (r.status === 'void' ? '<span class="badge bad">ملغي</span>' : '<span class="badge ok">سليم</span>'), v: (r) => (r.status === 'void' ? 'ملغي' : 'سليم') }];
   const load = async () => { rows = await GET('/api/documents', bq({ kind: st.kind, q: st.q, from: st.from, to: st.to })); mountTable($('#tb', el), cols, rows, { click: (r) => docView(r.id, load), rowCls: (r) => (r.status === 'void' ? 'void' : ''), maxh: '55vh', empty: 'مفيش مستندات في الفترة دي — اختار نوع من فوق وابدأ' }); };
   $$('.dkind', el).forEach((b) => (b.onclick = () => docForm(b.dataset.k, {}, null, load)));
+  $('#bcBtn', el).onclick = () => barcodeMaker();
   if ($('#lhBtn', el)) $('#lhBtn', el).onclick = () => letterheadForm(() => route());
   if ($('#lhGo', el)) $('#lhGo', el).onclick = () => letterheadForm(() => route());
   $('#dk', el).onchange = (e) => { st.kind = e.target.value; load(); };
