@@ -366,6 +366,33 @@ const scanNorm = (s) => String(s ?? '').trim().replace(/[٠-٩]/g, (d) => '٠١�
 const sameCode = (a, b) => { a = scanNorm(a).toLowerCase(); b = scanNorm(b).toLowerCase(); if (!a || !b) return false; return a === b || (/^\d+$/.test(a) && /^\d+$/.test(b) && a.replace(/^0+/, '') === b.replace(/^0+/, '')); };
 const prodExact = (p, q) => (p.barcode && sameCode(p.barcode, q)) || sameCode(p.code, q);
 const looksLikeBarcode = (q) => /^[0-9a-z\-]{6,}$/i.test(scanNorm(q)) && /\d{4,}/.test(scanNorm(q));
+/* ---------- التلوين: كتالوج أكواد الألوان + نافذة كود اللون وسعر التلوين ---------- */
+async function colorsList(force) { if (force || !S.colors) S.colors = await GET('/api/colors').catch(() => []); return S.colors; }
+const colorLabel = (c) => `${c.code}${c.name ? ' ' + c.name : ''}`;
+function tintModal(p, basePrice, onDone) {
+  let chosen = null;
+  const m = modal({ title: `🎨 تلوين: ${p.name}`, body: `
+    <div class="card" style="padding:10px 14px;margin-bottom:12px;background:var(--pri-soft)"><div class="row between"><span>سعر الأساس</span><b class="num">${money(basePrice)}</b></div></div>
+    <div class="field"><label class="f">كود اللون * <span class="faint">(اكتبه أو اختاره من الكتالوج)</span></label><div style="position:relative"><input class="in" id="tcc" placeholder="مثال: 1024 أو Timeless" autocomplete="off" dir="auto"></div><div id="tcs" class="small muted" style="margin-top:4px;min-height:18px"></div></div>
+    <div class="field"><label class="f">سعر التلوين (من شاشة الماكينة) *</label><input class="in" id="tcp" type="number" step="any" min="0" placeholder="0.00" style="font-size:18px"></div>
+    <div class="card" style="padding:10px 14px;background:#f8fafd"><div class="row between" style="font-size:17px"><span>سعر العبوة الملوّنة</span><b class="num" id="tct">${money(basePrice)}</b></div><div class="small faint">ده اللي هيظهر في الفاتورة — سعر واحد، وجنب الصنف كود اللون</div></div>`,
+    buttons: [{ t: 'إضافة للفاتورة', cls: 'pri', fn: () => {
+      const code = $('#tcc', m.mb).value.trim(); const tint = +$('#tcp', m.mb).value;
+      if (!code) throw new Error('اكتب كود اللون');
+      if (!($('#tcp', m.mb).value !== '' && tint >= 0)) throw new Error('اكتب سعر التلوين من الماكينة (لو مفيش اكتب 0)');
+      onDone({ color: chosen && chosen.code.toLowerCase() === code.split(' ')[0].toLowerCase() ? colorLabel(chosen) : code, tint: r2(tint) });
+    } }, { t: 'إلغاء' }],
+    onOpen: async (mb) => {
+      const tot = () => ($('#tct', mb).textContent = money(r2(basePrice + (+$('#tcp', mb).value || 0))));
+      $('#tcp', mb).oninput = tot;
+      const list = await colorsList();
+      const show = (c) => { $('#tcs', mb).innerHTML = c ? `${c.hex ? `<span style="display:inline-block;width:14px;height:14px;border-radius:4px;vertical-align:middle;border:1px solid var(--line);background:${esc(c.hex)}"></span> ` : ''}${esc(colorLabel(c))}${c.collection ? ' · ' + esc(c.collection) : ''}` : list.length ? '' : '<span class="faint">كتالوج الألوان فاضي — اكتب الكود بإيدك (المدير يقدر يضيف الأكواد من "الأصناف والأسعار")</span>'; };
+      show(null);
+      if (list.length) picker($('#tcc', mb), { items: () => list, match: (c, q) => c.code.toLowerCase().startsWith(q) || (c.name || '').toLowerCase().includes(q), label: (c) => esc(colorLabel(c)), sub: (c) => esc(c.collection || ''), onPick: (c) => { chosen = c; $('#tcc', mb).value = colorLabel(c); show(c); $('#tcp', mb).focus(); } });
+      $('#tcc', mb).addEventListener('keydown', (e) => { if (e.key === 'Enter' && !$('.dd', mb)) { e.preventDefault(); e.stopPropagation(); $('#tcp', mb).focus(); } });
+      $('#tcc', mb).addEventListener('input', () => { const v = $('#tcc', mb).value.trim().split(' ')[0].toLowerCase(); chosen = list.find((c) => c.code.toLowerCase() === v) || null; show(chosen); });
+    } });
+}
 // باركود مش متسجل: نربطه بصنف (مرة واحدة وبعد كده بيتعرف لوحده)
 function linkBarcode(code, prods, onLinked) {
   code = scanNorm(code);
@@ -748,7 +775,13 @@ async function refreshShiftPill() {
 function route() {
   if (!S.user) return;
   let v = (location.hash.replace(/^#\/?/, '') || '').split('?')[0];
-  if (!allowedNav().some((x) => x.id === v)) v = isCashierMode() ? 'pos' : 'dashboard';
+  if (!allowedNav().some((x) => x.id === v)) {
+    // صفحة مقفولة: نقول السبب بدل ما نحوّل في صمت
+    const want = NAV.find((x) => x.id === v);
+    if (want) toast(`"${want.t}" مقفولة على حسابك — المدير يفتحها من "المستخدمين والصلاحيات"${want.perm === 'documents' ? ' ← المطبوعات' : ''}`, 'warn');
+    v = isCashierMode() ? 'pos' : 'dashboard';
+    if (want) history.replaceState(null, '', '#/' + v);
+  }
   S.view = v;
   $$('nav a[data-v]').forEach((a) => a.classList.toggle('on', a.dataset.v === v));
   if (v === 'live') { const b = $('nav a[data-v=live] .nbadge'); if (b) b.remove(); }
@@ -1123,26 +1156,29 @@ VIEWS.pos = async (el) => {
   const visible = () => { const q = ps.value.trim().toLowerCase(); return prods.filter((p) => (!st.brand || brandOf(p) === st.brand) && (!st.cat || p.category === st.cat) && (!q || prodMatch(p, q))); };
   const renderGrid = () => {
     const list = visible();
-    pg.innerHTML = list.slice(0, 300).map((p) => `<button class="pcard ${p.stock <= 0 ? 'out' : ''}" data-id="${p.id}" style="--cc:${catColor(p.category)}"><span class="nm">${esc(p.name)}</span><span class="row between"><span class="pr"><span class="num">${money(p.price)}</span> <span class="faint small">ج.م</span></span><span class="stk ${p.stock <= 0 ? 'out' : p.stock <= p.min_stock ? 'low' : ''}">${p.stock <= 0 ? 'نفذ' : 'متاح ' + qf(p.stock)}</span></span><span class="st">كود ${esc(p.code)}${p.category ? ' · ' + esc(p.category) : ''}</span></button>`).join('')
+    pg.innerHTML = list.slice(0, 300).map((p) => `<button class="pcard ${p.stock <= 0 ? 'out' : ''}" data-id="${p.id}" style="--cc:${catColor(p.category)}"><span class="nm">${p.tint ? '<span class="badge pri" title="أساس تلوين — هيطلب كود اللون وسعر التلوين">🎨</span> ' : ''}${esc(p.name)}</span><span class="row between"><span class="pr"><span class="num">${money(p.price)}</span> <span class="faint small">ج.م</span></span><span class="stk ${p.stock <= 0 ? 'out' : p.stock <= p.min_stock ? 'low' : ''}">${p.stock <= 0 ? 'نفذ' : 'متاح ' + qf(p.stock)}</span></span><span class="st">كود ${esc(p.code)}${p.category ? ' · ' + esc(p.category) : ''}</span></button>`).join('')
       + (list.length > 300 ? `<div class="faint small" style="grid-column:1/-1;text-align:center">يظهر أول 300 صنف — اختار تصنيف أو اكتب للبحث</div>` : '') + (!list.length ? '<div class="empty" style="grid-column:1/-1">لا توجد أصناف مطابقة</div>' : '');
   };
   // سعر الجملة/المقاولين لو العميل جملة والصنف ليه سعر جملة
   const isWholesale = () => !!(st.customer && st.customer.tier === 'wholesale');
   const priceFor = (retail, price2) => (isWholesale() && price2 > 0 ? price2 : retail);
-  const add = (p, qty = 1) => {
-    const ex = st.cart.find((x) => x.product_id === p.id);
-    const base = priceFor(p.price, p.price2);
-    if (ex) ex.qty = r2(+ex.qty + qty); else st.cart.push({ product_id: p.id, name: p.name, price: base, base, retail: p.price, price2: p.price2 || 0, qty, stock: p.stock, unit: p.unit });
+  // أساس تلوين: قبل ما يتضاف بنسأل عن كود اللون وسعر التلوين من الماكينة — والسطر بيبقى بسعر واحد شامل
+  const add = (p, qty = 1, t) => {
+    if (p.tint && !t) return tintModal(p, priceFor(p.price, p.price2), (tt) => { add(p, qty, tt); ps.focus(); });
+    const tint = t ? r2(t.tint) : 0, color = t ? t.color : '';
+    const ex = st.cart.find((x) => x.product_id === p.id && (x.color || '') === color && r2(x.tint || 0) === tint);
+    const base = r2(priceFor(p.price, p.price2) + tint);
+    if (ex) ex.qty = r2(+ex.qty + qty); else st.cart.push({ product_id: p.id, name: p.name + (color ? ' — لون ' + color : ''), price: base, base, retail: p.price, price2: p.price2 || 0, qty, stock: p.stock, unit: p.unit, ...(p.tint ? { tint, color } : {}) });
     renderCart(true);
   };
-  const applyTier = () => { for (const x of st.cart) { const nb = priceFor(x.retail ?? x.base, x.price2); if (x.price === x.base) x.price = nb; x.base = nb; } renderCart(); };
+  const applyTier = () => { for (const x of st.cart) { const nb = r2(priceFor(x.retail ?? x.base, x.price2) + (+x.tint || 0)); if (x.price === x.base) x.price = nb; x.base = nb; } renderCart(); };
   const subtotal = () => r2(st.cart.reduce((s, x) => s + x.qty * x.price, 0));
   const discAmt = () => { const s = subtotal(); const v = +st.disc || 0; return r2(Math.min(s, st.discMode === 'pct' ? (s * v) / 100 : v)); };
   const renderCart = (scroll) => {
     const ci = $('#ci', el);
     ci.innerHTML = st.cart.length ? st.cart.map((x, i) => {
       const over = !allowNeg && x.qty > x.stock;
-      return `<div class="cline" data-i="${i}"><div class="nm">${esc(x.name)}${x.retail != null && x.base !== x.retail ? ' <span class="badge ok">سعر جملة</span>' : ''}</div><b class="num">${money(x.qty * x.price)}</b>
+      return `<div class="cline" data-i="${i}"><div class="nm">${esc(x.name)}${x.retail != null && r2(x.base - (+x.tint || 0)) !== x.retail ? ' <span class="badge ok">سعر جملة</span>' : ''}</div><b class="num">${money(x.qty * x.price)}</b>
         <div class="ctl"><button class="qbtn" data-a="m">−</button><input class="in sm" type="number" step="any" min="0" data-a="q" value="${x.qty}"><button class="qbtn" data-a="p">+</button>
         <span class="faint small">×</span>${can('change_price') ? `<input class="in sm" type="number" step="any" min="0" data-a="pr" value="${x.price}" style="width:90px">` : `<span class="num small">${money(x.price)}</span>`}
         <span class="sp"></span>${over ? `<span class="bad small">المتاح ${qf(x.stock)}</span>` : ''}<button class="btn ghost sm" data-a="x" title="حذف">✕</button></div></div>`;
@@ -1241,7 +1277,7 @@ VIEWS.pos = async (el) => {
   };
   const saveQuote = async (mb, print) => {
     const v = fv(mb);
-    const body = { branch_id: curBranch(), customer_id: st.customer ? st.customer.id : null, customer_name: v.customer_name || '', customer_phone: v.customer_phone || '', valid_until: v.valid_until, notes: v.notes, discount: discAmt(), items: st.cart.map((x) => ({ product_id: x.product_id, qty: x.qty, price: x.price })) };
+    const body = { branch_id: curBranch(), customer_id: st.customer ? st.customer.id : null, customer_name: v.customer_name || '', customer_phone: v.customer_phone || '', valid_until: v.valid_until, notes: v.notes, discount: discAmt(), items: st.cart.map((x) => ({ product_id: x.product_id, qty: x.qty, price: x.price, ...(x.color != null ? { tint: x.tint || 0, color: x.color } : {}) })) };
     const q = st.quoteId ? await PUT('/api/quotes/' + st.quoteId, body) : await POST('/api/quotes', body);
     Object.assign(st, { cart: [], customer: null, disc: 0, notes: '', quoteId: null, quoteDoc: '', qName: '', qPhone: '', qValid: '' });
     toast(`اتحفظ عرض السعر ${q.doc_no} ✓`, 'ok');
@@ -1257,7 +1293,7 @@ VIEWS.pos = async (el) => {
     if (!st.cart.length) return toast('الفاتورة فاضية', 'bad');
     const total = r2(subtotal() - discAmt());
     payModal(total, st, async (pays, print) => {
-      const body = { branch_id: curBranch(), customer_id: st.customer ? st.customer.id : null, items: st.cart.map((x) => ({ product_id: x.product_id, qty: x.qty, price: x.price })), discount: discAmt(), pays, notes: [st.notes, st.quoteDoc ? `(من عرض السعر ${st.quoteDoc})` : ''].filter(Boolean).join(' ') };
+      const body = { branch_id: curBranch(), customer_id: st.customer ? st.customer.id : null, items: st.cart.map((x) => ({ product_id: x.product_id, qty: x.qty, price: x.price, ...(x.color != null ? { tint: x.tint || 0, color: x.color } : {}) })), discount: discAmt(), pays, notes: [st.notes, st.quoteDoc ? `(من عرض السعر ${st.quoteDoc})` : ''].filter(Boolean).join(' ') };
       let s;
       try { s = await POST('/api/sales', body); }
       catch (e) { if (!e.offline) throw e; s = queueOfflineSale(body, st.customer); } // مفيش نت: تتحفظ على الجهاز وتترفع بعدين
@@ -1426,7 +1462,7 @@ VIEWS.products = async (el) => {
   const sc = can('see_cost');
   el.innerHTML = `<div class="toolbar"><input class="in" id="pq" placeholder="بحث بالاسم / الكود / الباركود" value="${esc(st.q)}" style="width:240px"><select class="in" id="pc"></select>
     <label class="chk"><input type="checkbox" id="pl" ${st.low ? 'checked' : ''}> النواقص فقط</label>${isAdmin() ? `<label class="chk"><input type="checkbox" id="pi" ${st.inactive ? 'checked' : ''}> إظهار الموقوفة</label>` : ''}
-    <span class="sp"></span>${can('products') ? `<button class="btn pri" id="pa">${icon('plus')}صنف جديد</button><button class="btn" id="pbulk">${icon('layers')}إضافة أصناف كتير</button>` : ''}${isAdmin() ? `<button class="btn" id="pimp">${icon('upload')}استيراد</button>` : ''}<button class="btn" id="pcsv">${icon('download')}Excel</button><button class="btn" id="pprn">${icon('print')}قائمة أسعار</button>${can('products') ? `<button class="btn" id="pbc">${icon('scan')}ملصقات باركود</button>` : ''}</div>
+    <span class="sp"></span>${can('products') ? `<button class="btn pri" id="pa">${icon('plus')}صنف جديد</button><button class="btn" id="pbulk">${icon('layers')}إضافة أصناف كتير</button>` : ''}${isAdmin() ? `<button class="btn" id="pimp">${icon('upload')}استيراد</button>` : ''}<button class="btn" id="pcsv">${icon('download')}Excel</button><button class="btn" id="pprn">${icon('print')}قائمة أسعار</button>${can('products') ? `<button class="btn" id="pbc">${icon('scan')}ملصقات باركود</button>` : ''}${isAdmin() ? '<button class="btn" id="prp" title="سعر البيع = سعر لستة الشركة + الضريبة + هامش الربح">💲 تسعير بهامش ربح</button>' : ''}${can('products') ? '<button class="btn" id="pcol" title="أكواد الألوان اللي الكاشير بيختار منها">🎨 كتالوج الألوان</button>' : ''}</div>
     <div class="grid g4" id="psum" style="margin-bottom:14px"></div><div id="ptb"></div>`;
   let all = [], rows = [];
   const cols = [
@@ -1468,9 +1504,49 @@ VIEWS.products = async (el) => {
   $('#pcsv', el).onclick = () => exportCSV('الأصناف', cols, rows);
   if ($('#pbc', el)) $('#pbc', el).onclick = () => barcodeLabels(rows);
   if ($('#pbulk', el)) $('#pbulk', el).onclick = () => { if (!curBranch()) return toast('اختار المعرض من فوق الأول', 'bad'); bulkAdd(all, load); };
+  if ($('#prp', el)) $('#prp', el).onclick = () => { if (!curBranch()) return toast('اختار المعرض من فوق الأول', 'bad'); repriceModal(all, load); };
+  if ($('#pcol', el)) $('#pcol', el).onclick = () => colorsCatalog();
   $('#pprn', el).onclick = () => printReport('قائمة الأسعار', `${rows.length} صنف`, tableHTML([{ t: 'الكود', k: 'code' }, { t: 'الصنف', k: 'name' }, { t: 'التصنيف', k: 'category' }, { t: 'السعر', n: 1, f: (r) => money(r.price) }], rows));
   await load();
 };
+/* ---------- التسعير بهامش ربح: سعر البيع = التكلفة (لستة الشركة) × (1 + الضريبة) × (1 + الهامش) ---------- */
+function repriceModal(all, onDone) {
+  const br = branchOf(curBranch()); const act = all.filter((p) => p.active);
+  const cats = [...new Set(act.map((p) => p.category).filter(Boolean))].sort();
+  const noCost = act.filter((p) => !(p.cost > 0)).length;
+  const m = modal({ title: `💲 تسعير بهامش ربح — ${br.name}`, wide: 'wide', body: `<p class="small muted" style="margin-top:0">سعر البيع الجديد = <b>التكلفة</b> (سعر لستة الشركة من غير ضريبة) × (1 + الضريبة) × (1 + هامش الربح)، ومقرّب لأعلى. الأصناف اللي معندهاش تكلفة مش بتتلمس${noCost ? ` (<b>${noCost}</b> صنف)` : ''}.</p>
+    <div class="grid g2" style="gap:0 12px"><div class="field"><label class="f">على</label><select class="in" id="rc">${opt('', `كل أصناف المعرض (${act.length})`)}${cats.map((c) => opt(c, `${c} (${act.filter((p) => p.category === c).length})`)).join('')}</select></div>
+      <div class="field"><label class="f">هامش الربح %</label><input class="in" id="rm" type="number" step="any" value="${esc(S.lastMargin ?? 0)}" style="font-size:18px"></div>
+      <div class="field"><label class="f">الضريبة %</label><input class="in" id="rv" type="number" step="any" value="14"></div>
+      <div class="field"><label class="f">التقريب لأعلى</label><select class="in" id="rr">${[[1, 'لأقرب جنيه'], [5, 'لأقرب 5 جنيه'], [10, 'لأقرب 10 جنيه']].map(([v, t]) => opt(v, t, 1)).join('')}</select></div></div>
+    <div id="rpv"></div>`,
+    buttons: [{ t: 'معاينة', fn: () => run(true).then(() => false) }, { t: 'تطبيق الأسعار الجديدة', cls: 'pri', fn: async () => { const pv = await run(true); if (!(await confirmBox(`هيتغيّر سعر <b>${pv.count}</b> صنف — متأكد؟`, 'تطبيق'))) return false; const r = await run(false); S.lastMargin = +$('#rm', m.mb).value; toast(`اتسعّر ${r.count} صنف بهامش ${S.lastMargin}% ✓`, 'ok'); dropCache(); onDone && onDone(); } }, { t: 'إلغاء' }] });
+  const run = async (preview) => {
+    const d = await POST('/api/products/reprice', { branch_id: curBranch(), category: $('#rc', m.mb).value, margin: +$('#rm', m.mb).value || 0, vat: $('#rv', m.mb).value === '' ? 14 : +$('#rv', m.mb).value, round: +$('#rr', m.mb).value, preview });
+    if (preview) $('#rpv', m.mb).innerHTML = `<div class="card" style="padding:10px 14px"><b>${d.count}</b> صنف هيتغيّر سعره — أمثلة:${tableHTML([{ t: 'الصنف', k: 'name' }, { t: 'السعر الحالي', n: 1, f: (r) => M(r.old) }, { t: 'السعر الجديد', n: 1, f: (r) => `<b>${M(r.new, r.new > r.old ? 'ok' : r.new < r.old ? 'bad' : '')}</b>` }], d.sample)}</div>`;
+    return d;
+  };
+  setTimeout(() => run(true).catch((e) => toast(e.message, 'bad')), 50);
+}
+/* ---------- كتالوج الألوان: الأكواد اللي الكاشير بيختار منها (من لستة جوتن أو Excel أو لصق) ---------- */
+async function colorsCatalog() {
+  const list = await colorsList(true);
+  const m = modal({ title: `🎨 كتالوج الألوان (${list.length} لون)`, wide: 'wide', body: `<div class="toolbar"><input class="in" id="cq" placeholder="ابحث بالكود أو الاسم" style="width:240px"><span class="sp"></span></div><div id="cl" class="tbl-wrap" style="max-height:34vh"></div>
+    <div class="card" style="padding:12px 14px;margin-top:12px"><b>إضافة / استيراد ألوان</b><div class="small muted" style="margin:4px 0 8px">الصق الأكواد هنا — كل لون في سطر: <span dir="ltr" class="num">الكود الاسم</span> (مثال: <span dir="ltr" class="num">1024 Timeless</span>) — أو ارفع ملف Excel فيه عمود "الكود" وعمود "الاسم". الكود الموجود بيتحدّث اسمه بس.</div>
+      <textarea class="in" id="cp" rows="5" dir="ltr" placeholder="1024 Timeless&#10;1453 Cotton Ball&#10;2993 Kilim"></textarea>
+      <div class="row" style="margin-top:8px"><button class="btn pri" id="cimp">إضافة الأكواد</button><label class="btn" style="cursor:pointer">📄 من ملف Excel<input type="file" id="cfile" accept=".xlsx,.xls,.csv" hidden></label><span class="sp"></span><span id="cres" class="small"></span></div></div>`, buttons: [{ t: 'إغلاق' }] });
+  const mb = m.mb; let cur = list;
+  const render = () => { const q = $('#cq', mb).value.trim().toLowerCase(); const rows = cur.filter((c) => !q || c.code.toLowerCase().startsWith(q) || (c.name || '').toLowerCase().includes(q)).slice(0, 500);
+    $('#cl', mb).innerHTML = rows.length ? `<table class="t"><thead><tr><th></th><th>الكود</th><th>الاسم</th><th>المجموعة</th></tr></thead><tbody>${rows.map((c) => `<tr><td style="width:30px">${c.hex ? `<span style="display:inline-block;width:18px;height:18px;border-radius:5px;border:1px solid var(--line);background:${esc(c.hex)}"></span>` : ''}</td><td><b class="num">${esc(c.code)}</b></td><td dir="auto">${esc(c.name || '')}</td><td>${esc(c.collection || '')}</td></tr>`).join('')}</tbody></table>` : `<div class="empty">${cur.length ? 'مفيش نتايج' : 'الكتالوج فاضي — الكاشير يقدر يكتب كود اللون بإيده، أو ضيف الأكواد من تحت'}</div>`; };
+  const send = async (rows) => { if (!rows.length) throw new Error('مفيش أكواد'); const r = await POST('/api/colors/import', { rows }); cur = await colorsList(true); $('.mh', m.el).firstChild.textContent = `🎨 كتالوج الألوان (${cur.length} لون)`; $('#cres', mb).innerHTML = `<span class="ok">اتضاف ${r.added} واتحدّث ${r.updated} ✓</span>`; render(); };
+  $('#cq', mb).oninput = debounce(render, 120);
+  $('#cimp', mb).onclick = async () => { try { const rows = $('#cp', mb).value.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => { const mt = l.match(/^([A-Za-z]*\s?[0-9][0-9A-Za-z\-]*)[\s,\t;:-]*(.*)$/); return mt ? { code: mt[1].replace(/\s+/g, ''), name: mt[2].trim() } : { code: l.split(/[\s,\t;]+/)[0], name: l.split(/[\s,\t;]+/).slice(1).join(' ') }; }); await send(rows); $('#cp', mb).value = ''; } catch (e) { toast(e.message, 'bad'); } };
+  $('#cfile', mb).onchange = async (e) => { const f = e.target.files[0]; if (!f) return; try { await loadXLSX(); const wb = XLSX.read(await f.arrayBuffer()); const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' });
+    const h = (aoa[0] || []).map((x) => String(x).trim().toLowerCase()); const ci = h.findIndex((x) => /كود|code|رقم|no/.test(x)), ni = h.findIndex((x) => /اسم|name/.test(x)), hi = h.findIndex((x) => /hex|لون/.test(x) && !/كود|اسم/.test(x));
+    const start = ci >= 0 ? 1 : 0; const rows = aoa.slice(start).map((r) => ({ code: String(r[ci >= 0 ? ci : 0] ?? '').trim(), name: String(r[ni >= 0 ? ni : 1] ?? '').trim(), hex: hi >= 0 ? String(r[hi] ?? '').trim() : '' })).filter((r) => r.code);
+    await send(rows); } catch (er) { toast(er.message, 'bad'); } e.target.value = ''; };
+  render();
+}
 /* اقتراحات التصنيفات والشركات (الموجود + تصنيفات العدة والإكسسوار) */
 const EXTRA_CATS = ['عدة وأدوات', 'فرش ورولات', 'إكسسوارات', 'سنفرة وصنفرة', 'شرائط ولواصق', 'تنر ومذيبات', 'أكياس ونايلون حماية', 'بخاخات (سبراي)', 'سيليكون وفوم'];
 const catSuggestions = (list) => [...new Set([...(list || S.cache['p' + curBranch()] || []).map((x) => x.category).filter(Boolean), ...EXTRA_CATS])];
@@ -1546,6 +1622,7 @@ function productForm(p, onSave, list) {
       ${isNew ? `<div class="field"><label class="f">رصيد أول المدة (الكمية الموجودة حالياً)</label><input class="in" type="number" step="any" name="stock" value=""></div>` : `<div class="field"><label class="f">الرصيد الحالي</label><div class="num" style="padding:8px 0;font-weight:800">${qf(p.stock)}</div><div class="small faint">لتعديل الرصيد استخدم شاشة الجرد أو فاتورة شراء</div></div>`}
       <div class="field" style="grid-column:1/-1"><label class="f">ملاحظات</label><input class="in" name="notes" value="${esc(p.notes)}"></div>
       <label class="chk"><input type="checkbox" name="active" ${p.active ? 'checked' : ''}> الصنف نشط ويظهر في الكاشير</label>
+      <label class="chk"><input type="checkbox" name="tint" ${p.tint ? 'checked' : ''}> 🎨 أساس تلوين (الكاشير بيكتب كود اللون وسعر التلوين من الماكينة)</label>
       ${isNew && isAdmin() && S.branches.length > 1 ? `<label class="chk"><input type="checkbox" name="both"> أضفه كمان في ${esc(S.branches.filter((x) => x.id !== curBranch()).map((x) => x.name).join(' و'))} (من غير رصيد)</label>` : ''}</div>`,
     buttons: [
       { t: 'حفظ', cls: 'pri', fn: async (mb) => {
@@ -2365,10 +2442,11 @@ async function quoteToPos(q) {
   st.cart = [];
   for (const it of q.items) {
     const p = prods.find((x) => x.id === it.product_id); if (!p) { missing.push(it.name); continue; }
-    const base = wh && p.price2 > 0 ? p.price2 : p.price;
+    const tint = p.tint ? +it.tint || 0 : 0, color = p.tint ? it.color || '' : '';
+    const base = r2((wh && p.price2 > 0 ? p.price2 : p.price) + tint);
     let price = it.price;
     if (price !== base && !can('change_price')) { changed.push(`${p.name}: ${money(it.price)} ← ${money(base)}`); price = base; }
-    st.cart.push({ product_id: p.id, name: p.name, price, base, retail: p.price, price2: p.price2 || 0, qty: it.qty, stock: p.stock, unit: p.unit });
+    st.cart.push({ product_id: p.id, name: p.name + (color ? ' — لون ' + color : ''), price, base, retail: p.price, price2: p.price2 || 0, qty: it.qty, stock: p.stock, unit: p.unit, ...(p.tint ? { tint, color } : {}) });
   }
   Object.assign(st, { customer: c, disc: q.discount || 0, discMode: 'amt', notes: q.notes || '', quoteId: q.id, quoteDoc: q.doc_no, qName: c ? '' : q.cust_name || '', qPhone: c ? '' : q.cust_phone || '', qValid: q.valid_until });
   if (location.hash !== '#/pos') location.hash = '#/pos'; else route();
