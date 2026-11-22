@@ -424,6 +424,75 @@ function tintModal(p, basePrice, onDone) {
       if ($('#tsave', mb)) $('#tsave', mb).onchange = (e) => { $('#tname', mb).style.display = e.target.checked ? '' : 'none'; };
     } });
 }
+/* ---------- كاميرا الموبايل كقارئ باركود / QR ---------- */
+// بيستخدم قارئ المتصفح الجاهز لو موجود (أندرويد كروم)، ولو مش موجود (آيفون/ويندوز) بيحمّل ZXing من vendor
+const camOk = () => !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) && window.isSecureContext !== false;
+const camBtn = (id, style = '') => (camOk() ? `<button type="button" class="btn" id="${id}" title="امسح بكاميرا الموبايل" style="${style}">📷</button>` : '');
+async function loadZXing() {
+  if (window.ZXing) return;
+  await new Promise((res, rej) => { const s = document.createElement('script'); s.src = BASE + 'vendor/zxing/zxing.min.js'; s.onload = res; s.onerror = () => rej(new Error('تعذر تحميل قارئ الكاميرا')); document.head.append(s); });
+}
+// onCode(text) — لو رجّعت true الكاميرا بتفضل مفتوحة (مسح ورا بعض في نقطة البيع)
+function camScan(onCode, o = {}) {
+  if (!camOk()) return toast('الكاميرا مش متاحة على الجهاز ده (لازم المتصفح يفتح بـ https)', 'bad');
+  let stream = null, stop = false, last = { t: '', at: 0 }, n = 0, torch = false;
+  const m = modal({ title: o.title || '📷 امسح الباركود أو الـ QR', body: `
+    <div style="position:relative;background:#000;border-radius:12px;overflow:hidden;aspect-ratio:3/4;max-height:62vh;margin:auto">
+      <video id="cv" playsinline muted autoplay style="width:100%;height:100%;object-fit:cover;display:block"></video>
+      <div style="position:absolute;inset:18% 10%;border:3px solid rgba(255,255,255,.9);border-radius:14px;box-shadow:0 0 0 2000px rgba(0,0,0,.35)"></div>
+      <div id="cline" style="position:absolute;left:12%;right:12%;top:50%;height:2px;background:#ef4444;box-shadow:0 0 8px #ef4444"></div>
+      <button type="button" class="btn sm" id="ctorch" style="position:absolute;bottom:10px;left:10px;display:none">🔦 كشاف</button>
+    </div>
+    <div id="cst" class="small muted" style="text-align:center;margin-top:8px">بيفتح الكاميرا…</div>${o.multi ? '<div id="cn" class="small" style="text-align:center"></div>' : ''}`,
+    buttons: [{ t: o.multi ? 'خلصت' : 'إلغاء' }] });
+  const ov = m.mb.closest('.ov'), video = $('#cv', m.mb), st = $('#cst', m.mb);
+  const done = () => { stop = true; if (stream) stream.getTracks().forEach((t) => t.stop()); };
+  new MutationObserver((_, obs) => { if (!ov.isConnected) { done(); obs.disconnect(); } }).observe(document.body, { childList: true });
+  const got = (text) => {
+    text = String(text || '').trim(); if (!text) return;
+    // نفس العبوة لسه قدام الكاميرا ← ماتتحسبش تاني. لازم تبعد ثانية وترجع (عشان 3 علب زي بعض تتحسب 3)
+    const now = Date.now(); if (text === last.t && now - last.at < 1200) { last.at = now; return; }
+    last = { t: text, at: now }; beepOk(); if (navigator.vibrate) navigator.vibrate(60);
+    let keep = false; try { keep = onCode(text) === true; } catch (e) { toast(e.message, 'bad'); }
+    if (keep && o.multi) { n++; $('#cn', m.mb).innerHTML = `<b class="ok">✓ ${n}</b> اتمسح — كمّل المسح أو دوس "خلصت"`; } else m.close();
+  };
+  (async () => {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+      if (stop) return done();
+      video.srcObject = stream; await video.play().catch(() => {});
+      const track = stream.getVideoTracks()[0]; const caps = track.getCapabilities ? track.getCapabilities() : {};
+      if (caps.torch) { const tb = $('#ctorch', m.mb); tb.style.display = ''; tb.onclick = () => { torch = !torch; track.applyConstraints({ advanced: [{ torch }] }).catch(() => {}); }; }
+      if (caps.focusMode && caps.focusMode.includes('continuous')) track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+      st.textContent = 'قرّب الباركود أو الـ QR جوه المربع';
+      let detect;
+      const fmts = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code', 'data_matrix'];
+      if ('BarcodeDetector' in window) {
+        try { const sup = await BarcodeDetector.getSupportedFormats(); const bd = new BarcodeDetector({ formats: fmts.filter((f) => sup.includes(f)) }); detect = async () => { const r = await bd.detect(video); return r[0] && r[0].rawValue; }; } catch { detect = null; }
+      }
+      if (!detect) {
+        await loadZXing(); const Z = window.ZXing;
+        const hints = new Map(); hints.set(Z.DecodeHintType.TRY_HARDER, true);
+        hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A, Z.BarcodeFormat.UPC_E, Z.BarcodeFormat.CODE_128, Z.BarcodeFormat.CODE_39, Z.BarcodeFormat.ITF, Z.BarcodeFormat.QR_CODE, Z.BarcodeFormat.DATA_MATRIX]);
+        const reader = new Z.MultiFormatReader(); reader.setHints(hints);
+        const cv = document.createElement('canvas'); const g = cv.getContext('2d', { willReadFrequently: true });
+        detect = async () => {
+          const w = video.videoWidth, h = video.videoHeight; if (!w) return null;
+          const sc = Math.min(1, 960 / Math.max(w, h)); cv.width = Math.round(w * sc); cv.height = Math.round(h * sc); g.drawImage(video, 0, 0, cv.width, cv.height);
+          try { const bmp = new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(cv))); return reader.decode(bmp).getText(); } catch { return null; } finally { reader.reset(); }
+        };
+      }
+      while (!stop) {
+        if (video.readyState >= 2) { const t = await detect().catch(() => null); if (t && !stop) got(t); }
+        await new Promise((r) => setTimeout(r, 180));
+      }
+    } catch (e) {
+      st.innerHTML = `<span class="bad">${e.name === 'NotAllowedError' ? 'اسمح للمتصفح يستخدم الكاميرا (من علامة القفل جنب العنوان) وجرّب تاني' : e.name === 'NotFoundError' ? 'مفيش كاميرا على الجهاز ده' : 'الكاميرا مافتحتش: ' + esc(e.message)}</span>`;
+      done();
+    }
+  })();
+  return m;
+}
 // باركود مش متسجل: نربطه بصنف (مرة واحدة وبعد كده بيتعرف لوحده)
 function linkBarcode(code, prods, onLinked) {
   code = codeFromScan(code);
@@ -1167,7 +1236,7 @@ VIEWS.pos = async (el) => {
     ${shift || !isAdmin() ? '' : `<div class="card" style="padding:10px 14px;margin-bottom:12px;background:var(--warn-soft);border-color:#fde68a" id="noshift"><div class="row"><b class="warn">مفيش وردية مفتوحة.</b><span class="muted small">افتح وردية عشان تقدر تقفل الدرج آخر اليوم وتعرف العجز/الزيادة.</span><span class="sp"></span><button class="btn sm" id="openShift">فتح وردية</button></div></div>`}
     <div class="pos">
       <div class="left">
-        <div class="search">${icon('search')}<input class="in" id="ps" placeholder="ابحث باسم الصنف أو الكود أو امسح الباركود…  (F2)" autocomplete="off"></div>
+        <div class="search">${icon('search')}<input class="in" id="ps" placeholder="ابحث باسم الصنف أو الكود أو امسح الباركود…  (F2)" autocomplete="off"${camOk() ? ' style="padding-left:58px"' : ''}>${camBtn('pcam', 'position:absolute;left:8px;top:50%;transform:translateY(-50%);padding:6px 10px;font-size:18px')}</div>
         <div id="filters"></div>
         <div class="pgrid" id="pg"></div>
       </div>
@@ -1291,6 +1360,13 @@ VIEWS.pos = async (el) => {
     if (looksLikeBarcode(q)) { beepBad(); linkBarcode(q, prods, (p) => { add(p); ps.focus(); }); return true; }
     return false;
   };
+  // 📷 كاميرا الموبايل: مسح ورا بعض — كل صنف بيتضاف والكاميرا فاضلة مفتوحة
+  if ($('#pcam', el)) $('#pcam', el).onclick = () => camScan((code) => {
+    const ex = prods.find((p) => prodExact(p, code));
+    if (ex && !ex.tint) { add(ex); toast(`اتضاف: ${ex.name}`, 'ok'); return true; }
+    setTimeout(() => { if (!takeCode(code)) toast(`مفيش صنف بالكود ${codeFromScan(code)}`, 'bad'); }, 50); // أساس تلوين / فاتورة / باركود جديد ← نقفل الكاميرا
+    return false;
+  }, { multi: true, title: '📷 امسح الأصناف' });
   // Enter: نستنى لحظة صغيرة — الـ QR ممكن يكون كذا سطر والقارئ بيبعت Enter بينهم
   let psFin = null;
   const psRun = () => {
@@ -1483,7 +1559,7 @@ function payModal(total, st, submit) {
    ===================================================================== */
 VIEWS.sales = async (el) => {
   const st = S.salesSt || (S.salesSt = { ...newRange('today'), kind: '', q: '' });
-  el.innerHTML = `<div class="toolbar">${rangeHTML(st)}<select class="in" id="sk">${opt('', 'الكل', st.kind)}${opt('sale', 'بيع', st.kind)}${opt('return', 'مرتجع', st.kind)}</select><input class="in" id="sq" placeholder="رقم الفاتورة أو اسم العميل — أو امسح باركود الفاتورة" value="${esc(st.q)}" style="width:300px"><span class="sp"></span><button class="btn" id="csv">${icon('download')}Excel</button></div>
+  el.innerHTML = `<div class="toolbar">${rangeHTML(st)}<select class="in" id="sk">${opt('', 'الكل', st.kind)}${opt('sale', 'بيع', st.kind)}${opt('return', 'مرتجع', st.kind)}</select><input class="in" id="sq" placeholder="رقم الفاتورة أو اسم العميل — أو امسح باركود الفاتورة" value="${esc(st.q)}" style="width:300px">${camBtn('scam')}<span class="sp"></span><button class="btn" id="csv">${icon('download')}Excel</button></div>
     <div class="grid g4" id="sum" style="margin-bottom:14px"></div><div id="tb"></div>`;
   let rows = [];
   const cols = [
@@ -1512,6 +1588,11 @@ VIEWS.sales = async (el) => {
   // باركود الفاتورة المطبوعة ← تفتح على طول (مرتجع / إعادة طباعة)
   $('#sq', el).onkeydown = (e) => { if (e.key !== 'Enter') return; const sm = /^s0*(\d+)$/i.exec(scanNorm(e.target.value)); if (sm) { e.preventDefault(); e.target.value = ''; beepOk(); saleModal(+sm[1], load).catch((er) => toast('الفاتورة دي مش موجودة: ' + er.message, 'bad')); } };
   setTimeout(() => $('#sq', el) && $('#sq', el).focus(), 50);
+  if ($('#scam', el)) $('#scam', el).onclick = () => camScan((code) => {
+    const sm = /^s0*(\d+)$/i.exec(scanNorm(code));
+    if (sm) saleModal(+sm[1], load).catch((er) => toast('الفاتورة دي مش موجودة: ' + er.message, 'bad'));
+    else toast('ده مش باركود فاتورة — امسح الباركود اللي تحت الفاتورة المطبوعة', 'bad');
+  }, { title: '📷 امسح باركود الفاتورة' });
   $('#csv', el).onclick = () => exportCSV('فواتير-البيع', cols, rows);
   await load();
 };
@@ -1578,7 +1659,7 @@ function returnModal(s, onChange) {
 VIEWS.products = async (el) => {
   const st = S.prodSt || (S.prodSt = { q: '', cat: '', low: false, inactive: false });
   const sc = can('see_cost');
-  el.innerHTML = `<div class="toolbar"><input class="in" id="pq" placeholder="بحث بالاسم / الكود / الباركود" value="${esc(st.q)}" style="width:240px"><select class="in" id="pc"></select>
+  el.innerHTML = `<div class="toolbar"><input class="in" id="pq" placeholder="بحث بالاسم / الكود / الباركود" value="${esc(st.q)}" style="width:240px">${camBtn('pqcam')}<select class="in" id="pc"></select>
     <label class="chk"><input type="checkbox" id="pl" ${st.low ? 'checked' : ''}> النواقص فقط</label>${isAdmin() ? `<label class="chk"><input type="checkbox" id="pi" ${st.inactive ? 'checked' : ''}> إظهار الموقوفة</label>` : ''}
     <span class="sp"></span>${can('products') ? `<button class="btn pri" id="pa">${icon('plus')}صنف جديد</button><button class="btn" id="pbulk">${icon('layers')}إضافة أصناف كتير</button>` : ''}${isAdmin() ? `<button class="btn" id="pimp">${icon('upload')}استيراد</button>` : ''}<button class="btn" id="pcsv">${icon('download')}Excel</button><button class="btn" id="pprn">${icon('print')}قائمة أسعار</button>${can('products') ? `<button class="btn" id="pbc">${icon('scan')}ملصقات باركود</button>` : ''}${isAdmin() ? '<button class="btn" id="prp" title="سعر البيع = سعر لستة الشركة + الضريبة + هامش الربح">💲 تسعير بهامش ربح</button>' : ''}${can('products') ? '<button class="btn" id="pcol" title="أكواد الألوان اللي الكاشير بيختار منها">🎨 كتالوج الألوان</button>' : ''}</div>
     <div class="grid g4" id="psum" style="margin-bottom:14px"></div><div id="ptb"></div>`;
@@ -1608,6 +1689,7 @@ VIEWS.products = async (el) => {
     S.cache['p' + curBranch()] = null; filter();
   };
   $('#pq', el).oninput = debounce((e) => { st.q = e.target.value.trim(); filter(); }, 150);
+  if ($('#pqcam', el)) $('#pqcam', el).onclick = () => camScan((code) => { const c = codeFromScan(code); $('#pq', el).value = c; st.q = c; filter(); if (!all.some((p) => p.barcode && sameCode(p.barcode, c))) toast(`مفيش صنف عليه الباركود ${c}`, 'warn'); }, { title: '📷 دوّر بالباركود' });
   $('#pc', el).onchange = (e) => { st.cat = e.target.value; filter(); };
   $('#pl', el).onchange = (e) => { st.low = e.target.checked; filter(); };
   if ($('#pi', el)) $('#pi', el).onchange = (e) => { st.inactive = e.target.checked; filter(); };
@@ -1729,7 +1811,7 @@ function productForm(p, onSave, list) {
     body: `<datalist id="dlc">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist><datalist id="dlu">${(S.settings.units || []).map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
       <div class="grid g2"><div class="field" style="grid-column:1/-1"><label class="f">اسم الصنف *</label><input class="in" name="name" value="${esc(p.name)}"></div>
       <div class="field"><label class="f">الكود (يتولد تلقائياً لو فاضي)</label><input class="in" name="code" value="${esc(p.code)}" dir="ltr"></div>
-      <div class="field"><label class="f">الباركود</label><input class="in" name="barcode" value="${esc(p.barcode)}" dir="ltr" placeholder="امسح الباركود هنا"></div>
+      <div class="field"><label class="f">الباركود</label><div class="row" style="flex-wrap:nowrap;gap:6px"><input class="in" name="barcode" value="${esc(p.barcode)}" dir="ltr" placeholder="امسح الباركود هنا" style="flex:1">${camBtn('bcam')}</div></div>
       <div class="field"><label class="f">التصنيف</label><input class="in" name="category" list="dlc" value="${esc(p.category)}"></div>
       <div class="field"><label class="f">الوحدة</label><input class="in" name="unit" list="dlu" value="${esc(p.unit)}"></div>
       <div class="field"><label class="f">الشركة / الماركة</label><input class="in" name="brand" list="dlb" value="${esc(p.brand)}" placeholder="جوتن، باكين، سايبس… أو اتركها فاضية للعدة"><datalist id="dlb">${brandSuggestions(list).map((c) => `<option value="${esc(c)}">`).join('')}</datalist></div>
@@ -1776,6 +1858,7 @@ function productForm(p, onSave, list) {
     if (fin && e.key.length === 1) { clearTimeout(fin); fin = null; }
   });
   bi.addEventListener('change', () => { if (!fin) bi.value = codeFromScan(bi.value); });
+  if ($('#bcam', pm.mb)) $('#bcam', pm.mb).onclick = () => camScan((code) => { bi.value = code; finish(); }, { title: '📷 امسح باركود العبوة' });
   // لو المؤشر في خانة تانية والقارئ كتب (حروف سريعة جداً + Enter) ← ننقل اللي اتكتب لخانة الباركود ونرجّع الخانة زي ما كانت
   let burst = { t: 0, s: '', el: null, v0: '' };
   pm.mb.addEventListener('keydown', (e) => {
