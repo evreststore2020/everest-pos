@@ -572,7 +572,7 @@ function invLogoHTML(c, brId, thermal) {
   return `<div class="ilogo" style="text-align:center;margin-bottom:${thermal ? 4 : 0}px">${main ? `<img src="${esc(main)}" alt="" style="max-height:${h}mm;max-width:${thermal ? '70mm' : '60mm'};object-fit:contain${thermal ? ';filter:grayscale(1)' : ''}">` : ''}
     ${parts.length ? `<div style="display:flex;gap:${thermal ? 6 : 10}px;justify-content:center;align-items:center;margin-top:3px">${parts.map((p) => `<img src="${esc(p)}" alt="" style="max-height:${Math.round(h * 0.45)}mm;max-width:${thermal ? '20mm' : '26mm'};object-fit:contain${thermal ? ';filter:grayscale(1)' : ''}">`).join('')}</div>` : ''}</div>`;
 }
-async function printSale(s, fmt) {
+async function saleReceipt(s, fmt) {
   const b = branchOf(s.branch_id); const thermal = (fmt || b.print_format || 'thermal') === 'thermal';
   const isRet = s.kind === 'return';
   const cashPay = (s.pays.find((p) => p.method === 'cash') || {}).amount || 0;
@@ -593,22 +593,22 @@ async function printSale(s, fmt) {
   const bc = await saleBarcodeSVG(s, thermal);
   const lc = await invLogo(); const lg = invLogoHTML(lc, s.branch_id, thermal); const hideName = lg && lc.name === false;
   if (thermal) {
-    printHTML(`<div style="padding-top:2mm"></div>${lg}${hideName ? '' : `<h1>${esc(b.name)}</h1>`}${company ? `<div class="sub">${esc(company)}</div>` : ''}${b.address ? `<div class="sub">${esc(b.address)}</div>` : ''}${b.phone ? `<div class="sub">ت: ${esc(b.phone)}</div>` : ''}
+    return { thermal: true, html: `<div style="padding-top:2mm"></div>${lg}${hideName ? '' : `<h1>${esc(b.name)}</h1>`}${company ? `<div class="sub">${esc(company)}</div>` : ''}${b.address ? `<div class="sub">${esc(b.address)}</div>` : ''}${b.phone ? `<div class="sub">ت: ${esc(b.phone)}</div>` : ''}
       <div class="hr"></div><div class="c" style="font-weight:bold">${title}</div>
       <table class="meta">${meta.map(([k, v]) => `<tr><td>${k}</td><td class="n">${esc(v)}</td></tr>`).join('')}</table><div class="hr"></div>
       <table class="items"><thead><tr><th>الصنف</th><th class="n">الكمية</th><th class="n">السعر</th><th class="n">الإجمالي</th></tr></thead><tbody>
       ${s.items.map((i) => `<tr><td class="nm" colspan="4">${esc(i.name)}</td></tr><tr><td></td><td class="n">${qf(i.qty)}</td><td class="n">${money(i.price)}</td><td class="n">${money(i.total)}</td></tr>`).join('')}</tbody></table>
       <table class="tot">${tot.map(([k, v, c]) => `<tr class="${c || ''}"><td>${k}</td><td class="n">${v}</td></tr>`).join('')}</table>
-      ${s.notes ? `<div class="hr"></div><div>${esc(s.notes)}</div>` : ''}<div class="hr"></div><div class="ft">${esc(b.receipt_footer || 'شكراً لزيارتكم')}</div>${bc}`, true);
-  } else {
-    printHTML(`<div class="head"><div style="display:flex;gap:12px;align-items:center">${lg}<div>${hideName ? '' : `<h1>${esc(b.name)}</h1>`}${company ? `<div class="sub">${esc(company)}</div>` : ''}<div class="sub">${esc(b.address || '')} ${b.phone ? ' — ت: ' + esc(b.phone) : ''}</div></div></div>
+      ${s.notes ? `<div class="hr"></div><div>${esc(s.notes)}</div>` : ''}<div class="hr"></div><div class="ft">${esc(b.receipt_footer || 'شكراً لزيارتكم')}</div>${bc}` };
+  }
+  return { thermal: false, html: `<div class="head"><div style="display:flex;gap:12px;align-items:center">${lg}<div>${hideName ? '' : `<h1>${esc(b.name)}</h1>`}${company ? `<div class="sub">${esc(company)}</div>` : ''}<div class="sub">${esc(b.address || '')} ${b.phone ? ' — ت: ' + esc(b.phone) : ''}</div></div></div>
       <div><h2>${title}</h2><table class="meta">${meta.map(([k, v]) => `<tr><td>${k}:</td><td><b>${esc(v)}</b></td></tr>`).join('')}</table></div></div>
       <table class="t"><thead><tr><th>#</th><th>الصنف</th><th class="n">الكمية</th><th class="n">السعر</th><th class="n">الخصم</th><th class="n">الإجمالي</th></tr></thead><tbody>
       ${s.items.map((i, n) => `<tr><td>${n + 1}</td><td>${esc(i.name)}</td><td class="n">${qf(i.qty)}</td><td class="n">${money(i.price)}</td><td class="n">${i.discount ? money(i.discount) : ''}</td><td class="n">${money(i.total)}</td></tr>`).join('')}</tbody></table>
       <table class="tot">${tot.map(([k, v, c]) => `<tr class="${c || ''}"><td>${k}</td><td class="n">${v}</td></tr>`).join('')}</table>
-      ${s.notes ? `<p>ملاحظات: ${esc(s.notes)}</p>` : ''}<div class="ft">${esc(b.receipt_footer || '')}</div>${bc}`, false);
-  }
+      ${s.notes ? `<p>ملاحظات: ${esc(s.notes)}</p>` : ''}<div class="ft">${esc(b.receipt_footer || '')}</div>${bc}` };
 }
+async function printSale(s, fmt) { const r = await saleReceipt(s, fmt); printHTML(r.html, r.thermal); }
 function printReport(title, sub, html) {
   const b = curBranch() ? branchOf(curBranch()).name : 'كل المعارض';
   printHTML(`<div class="head"><div><h1>${esc(title)}</h1><div class="sub">${esc(sub || '')}</div></div><div class="sub">${esc(S.settings.company_name || '')}<br>${esc(b)}<br>طُبع: ${new Date().toLocaleString('en-GB')}</div></div>${html}`, false);
@@ -698,10 +698,58 @@ function saleText(s) {
   L.push('', b.receipt_footer || 'شكراً لزيارتكم 🌷', b.phone ? `📞 ${b.phone}` : '');
   return L.filter((x) => x !== '').join('\n').replace(/\n{3,}/g, '\n\n');
 }
+/* ---------- الفاتورة / المستند كصورة (بنفس شكل الطباعة بالظبط) ---------- */
+// بنرسم نفس HTML الطباعة جوه iframe مخفي، ونحوّله لصورة PNG (SVG foreignObject ← canvas)
+async function htmlToImage(html, css, widthPx, scale = 2) {
+  const cssX = String(css).replace(/@page\s*\{[^}]*\}/g, '').replace(/(^|[\s,{}])body(?=[\s,{.:#[])/g, '$1.xbody').replace(/(^|[\s,{}])html(?=[\s,{.:#[])/g, '$1.xbody');
+  const fr = document.createElement('iframe'); fr.style.cssText = `position:fixed;left:-10000px;top:0;width:${widthPx}px;height:200px;border:0;visibility:hidden`;
+  document.body.append(fr);
+  try {
+    const d = fr.contentDocument; d.open(); d.write(`<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><style>html,body{margin:0;background:#fff}${cssX}</style></head><body><div class="xbody" dir="rtl" style="background:#fff;width:${widthPx}px;box-sizing:border-box">${html}</div></body></html>`); d.close();
+    await new Promise((r) => (d.readyState === 'complete' ? r() : fr.addEventListener('load', r, { once: true })));
+    await Promise.all([...d.images].map((im) => (im.complete ? 0 : new Promise((r) => { im.onload = im.onerror = r; }))));
+    if (d.fonts && d.fonts.ready) await d.fonts.ready;
+    const box = d.querySelector('.xbody'); const w = widthPx, h = Math.ceil(box.scrollHeight);
+    box.style.direction = 'rtl'; const xml = new XMLSerializer().serializeToString(box);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml"><style>${cssX.replace(/</g, '\\3c ')}</style>${xml}</div></foreignObject></svg>`;
+    const img = new Image(); img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); await img.decode();
+    const cv = document.createElement('canvas'); cv.width = w * scale; cv.height = h * scale; const g = cv.getContext('2d');
+    g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height); g.scale(scale, scale); g.drawImage(img, 0, 0, w, h);
+    return await new Promise((res, rej) => cv.toBlob((b) => (b ? res(b) : rej(new Error('مقدرتش أعمل الصورة'))), 'image/png'));
+  } finally { fr.remove(); }
+}
+async function saleImage(s, fmt) { const r = await saleReceipt(s, fmt); return htmlToImage(r.html, PRINT_BASE + (r.thermal ? PRINT_THERMAL.replace('width:80mm', 'width:330px') : PRINT_A4 + '.xbody{padding:28px}'), r.thermal ? 330 : 794, r.thermal ? 2.5 : 2); }
+// نافذة الإرسال: صورة جاهزة ← مشاركة (موبايل) / نسخ ولصق في واتساب (كمبيوتر) / تنزيل / رسالة نص
+async function shareImageModal({ title, make, name, phone, text, msg }) {
+  const m = modal({ title, wide: 'wide', body: `<div class="grid g2" style="gap:16px;align-items:start"><div>
+      <div class="field"><label class="f">موبايل العميل (واتساب)</label><input class="in" id="shp" dir="ltr" value="${esc(phone || '')}" placeholder="01xxxxxxxxx"></div>
+      <div id="shb" style="display:flex;flex-direction:column;gap:8px"><div class="muted small">بيجهّز الصورة…</div></div>
+      <div class="small faint" style="margin-top:10px" id="shh"></div></div>
+      <div style="background:#f1f5f9;border-radius:10px;padding:10px;max-height:60vh;overflow:auto;text-align:center"><img id="shi" alt="" style="max-width:100%;box-shadow:0 2px 10px rgba(0,0,0,.12);background:#fff"></div></div>`, buttons: [{ t: 'إغلاق' }] });
+  const mb = m.mb; const ph = () => $('#shp', mb).value.trim();
+  let blob, file;
+  try { blob = await make(); file = new File([blob], name + '.png', { type: 'image/png' }); $('#shi', mb).src = URL.createObjectURL(blob); }
+  catch (e) { $('#shb', mb).innerHTML = `<div class="bad small">مقدرتش أعمل صورة على المتصفح ده (${esc(e.message || e)}) — ابعتها رسالة نص.</div>`; }
+  const canShare = file && navigator.canShare && navigator.canShare({ files: [file] });
+  const canCopy = blob && navigator.clipboard && window.ClipboardItem;
+  const btn = (id, cls, t) => `<button type="button" class="btn ${cls}" id="${id}" style="justify-content:flex-start">${t}</button>`;
+  $('#shb', mb).innerHTML = (blob ? (canShare ? btn('sh1', 'ok lg', '📤 ابعت الصورة (اختار واتساب)') : '') + (canCopy ? btn('sh2', canShare ? '' : 'ok lg', '📋 انسخ الصورة وافتح محادثة العميل') : '') + btn('sh3', '', '⬇ نزّل الصورة') : '') + (text ? btn('sh4', 'ghost', '💬 ابعت رسالة نص بس') : '');
+  $('#shh', mb).innerHTML = canShare ? 'على الموبايل: دوس "ابعت الصورة" واختار واتساب ← العميل.' : canCopy ? 'على الكمبيوتر: "انسخ الصورة" ← هيفتح واتساب على محادثة العميل ← دوس <b>Ctrl+V</b> وبعدين Enter.' : '';
+  const needPhone = async () => { let p = ph(); if (!p) { p = await promptBox('واتساب', 'رقم موبايل العميل:', ''); if (p) $('#shp', mb).value = p; } return p; };
+  if ($('#sh1', mb)) $('#sh1', mb).onclick = async () => { try { await navigator.share({ files: [file], text: msg || '' }); } catch (e) { if (e.name !== 'AbortError') toast(e.message, 'bad'); } };
+  if ($('#sh2', mb)) $('#sh2', mb).onclick = async () => {
+    try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); } catch (e) { return toast('المتصفح رفض النسخ — نزّل الصورة وابعتها: ' + e.message, 'bad'); }
+    const p = await needPhone(); if (p == null) return;
+    toast('الصورة اتنسخت ✓ — في واتساب دوس Ctrl+V وبعدين Enter', 'ok');
+    if (p) openWhatsApp(p, msg || ''); else window.open('https://web.whatsapp.com/', '_blank');
+  };
+  if ($('#sh3', mb)) $('#sh3', mb).onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name + '.png'; a.click(); };
+  if ($('#sh4', mb)) $('#sh4', mb).onclick = async () => { const p = await needPhone(); if (p) openWhatsApp(p, text); };
+}
 async function sendSaleWhatsApp(s) {
-  const phone = s.cust_phone || (await promptBox('إرسال الفاتورة واتساب', 'رقم موبايل العميل (واتساب):', ''));
-  if (phone == null) return;
-  openWhatsApp(phone, saleText(s));
+  const b = branchOf(s.branch_id); const isRet = s.kind === 'return';
+  shareImageModal({ title: `💬 إرسال ${isRet ? 'إيصال المرتجع' : 'الفاتورة'} ${s.doc_no}`, name: `${isRet ? 'مرتجع' : 'فاتورة'}-${s.doc_no}`, phone: s.cust_phone || '', text: saleText(s),
+    msg: `${isRet ? 'إيصال مرتجع' : 'فاتورة'} رقم ${s.doc_no} — ${b.name || ''}\nالصافي: ${money(s.total)} ج.م`, make: () => saleImage(s) });
 }
 // شاشة بعد الحفظ: الباقي للعميل كبير وواضح + طباعة/واتساب
 function saleDone(s) {
@@ -1633,6 +1681,7 @@ async function saleModal(id, onChange) {
       { t: 'طباعة A4', fn: () => { printSale(s, 'a4'); return false; } },
       { t: '💬 واتساب', fn: () => { sendSaleWhatsApp(s); return false; } },
       ...(isSale && (s.channel === 'wholesale' || s.delivery_status) ? [{ t: '📦 إذن تسليم', fn: () => { printDeliveryNote(s); return false; } }] : []),
+      ...(isSale && can('documents') ? [{ t: '📄 على ورق الشركة', fn: () => { docForm('quote', { _br: s.branch_id, _phone: s.cust_phone || '', to: s.cust_name || s.customer_name || '', items: s.items.map((i) => ({ desc: i.name, unit: '', qty: i.qty, price: i.price })), discount: s.discount || 0, subject: `فاتورة رقم ${s.doc_no}` }); return false; } }] : []),
       ...(isAdmin() ? [{ t: '🎥 الكاميرا', fn: () => { camModal(s.branch_id, s.date, `${isSale ? 'فاتورة بيع' : 'مرتجع'} ${s.doc_no} — ${s.user_name || ''}`); return false; } }] : []),
       ...(isSale && s.status === 'ok' && can('returns') ? [{ t: 'عمل مرتجع', fn: (mb, close) => { close(); returnModal(s, onChange); } }] : []),
       ...(isAdmin() && s.status === 'ok' ? [{ t: 'إلغاء الفاتورة', cls: 'bad', fn: async (mb, close) => { const r = await promptBox('إلغاء الفاتورة', 'سبب الإلغاء (المخزون والخزينة هيرجعوا زي ما كانوا):'); if (r == null) return false; await POST(`/api/sales/${s.id}/void`, { reason: r }); toast('تم إلغاء الفاتورة', 'ok'); dropCache(); close(); onChange && onChange(); } }] : []),
@@ -2751,8 +2800,8 @@ async function quoteModal(id, onChange) {
     buttons: [
       ...(open ? [{ t: `${icon('cart')} تحويل لفاتورة / تعديل`, cls: 'ok pri', fn: async () => { await quoteToPos(q); } }] : []),
       { t: `${icon('print')} طباعة`, fn: () => { printQuote(q); return false; } },
-      ...(can('documents') ? [{ t: '📄 عرض رسمي على ورق الشركة', fn: () => { docForm('quote', { _br: q.branch_id, to: q.cust_name || '', items: q.items.map((i) => ({ desc: i.name, unit: i.unit || '', qty: i.qty, price: i.price })), discount: q.discount || 0, valid: q.valid_until, subject: q.notes || '' }); } }] : []),
-      ...(q.cust_phone ? [{ t: '💬 واتساب', fn: () => { openWhatsApp(q.cust_phone, quoteText(q)); return false; } }] : []),
+      ...(can('documents') ? [{ t: '📄 عرض رسمي على ورق الشركة', fn: () => { docForm('quote', { _br: q.branch_id, _phone: q.cust_phone || '', to: q.cust_name || '', items: q.items.map((i) => ({ desc: i.name, unit: i.unit || '', qty: i.qty, price: i.price })), discount: q.discount || 0, valid: q.valid_until, subject: q.notes || '' }); } }] : []),
+      { t: '💬 واتساب', fn: () => { shareImageModal({ title: `💬 إرسال عرض السعر ${q.doc_no}`, name: `عرض-سعر-${q.doc_no}`, phone: q.cust_phone || '', text: quoteText(q), msg: `عرض سعر رقم ${q.doc_no}`, make: async () => htmlToImage(await printQuote(q, true), PRINT_BASE + PRINT_A4 + '.xbody{padding:28px}', 794, 2) }); return false; } },
       ...(open ? [{ t: 'إلغاء العرض', cls: 'bad', fn: async () => { const why = await promptBox('إلغاء عرض السعر', 'السبب (اختياري) — مثلاً: العميل اشترى من مكان تاني'); if (why === null) return false; await POST(`/api/quotes/${q.id}/cancel`, { reason: why }); toast('اتلغى العرض', 'ok'); onChange && onChange(); } }] : []),
       { t: 'إغلاق' },
     ] });
@@ -2788,18 +2837,19 @@ function quoteText(q) {
     ...q.items.map((i) => `• ${i.name} × ${qf(i.qty)} = ${money(i.total)}`), '', q.discount ? `الخصم: ${money(q.discount)}` : '', `*الإجمالي: ${money(q.total)} ج.م*`,
     `العرض ساري حتى ${q.valid_until}`, q.notes ? `ملاحظات: ${q.notes}` : '', b.phone ? `للتواصل: ${b.phone}` : ''].filter((x, i, a) => x !== '' || (a[i - 1] !== '' && i)).join('\n');
 }
-async function printQuote(q) {
+async function printQuote(q, asHtml) {
   const b = branchOf(q.branch_id); const company = S.settings.company_name || '';
   const lc = await invLogo(); const lg = invLogoHTML(lc, q.branch_id, false); const hideName = lg && lc.name === false;
   const sub = r2(q.items.reduce((s, i) => s + i.total, 0));
   const meta = [['رقم العرض', q.doc_no], ['التاريخ', q.date.slice(0, 10)], ['ساري حتى', q.valid_until], q.cust_name ? ['السادة', q.cust_name] : null, q.cust_phone ? ['موبايل', q.cust_phone] : null].filter(Boolean);
-  printHTML(`<div class="head"><div style="display:flex;gap:12px;align-items:center">${lg}<div>${hideName ? '' : `<h1>${esc(b.name || '')}</h1>`}${company ? `<div class="sub">${esc(company)}</div>` : ''}<div class="sub">${esc(b.address || '')} ${b.phone ? ' — ت: ' + esc(b.phone) : ''}</div></div></div>
+  const html = (`<div class="head"><div style="display:flex;gap:12px;align-items:center">${lg}<div>${hideName ? '' : `<h1>${esc(b.name || '')}</h1>`}${company ? `<div class="sub">${esc(company)}</div>` : ''}<div class="sub">${esc(b.address || '')} ${b.phone ? ' — ت: ' + esc(b.phone) : ''}</div></div></div>
     <div><h2>عرض سعر</h2><table class="meta">${meta.map(([k, v]) => `<tr><td>${k}:</td><td><b>${esc(v)}</b></td></tr>`).join('')}</table></div></div>
     <table class="t"><thead><tr><th>#</th><th>الصنف</th><th>الوحدة</th><th class="n">الكمية</th><th class="n">السعر</th><th class="n">الإجمالي</th></tr></thead><tbody>
     ${q.items.map((i, n) => `<tr><td>${n + 1}</td><td>${esc(i.name)}</td><td>${esc(i.unit || '')}</td><td class="n">${qf(i.qty)}</td><td class="n">${money(i.price)}</td><td class="n">${money(i.total)}</td></tr>`).join('')}</tbody></table>
     <table class="tot"><tr><td>الإجمالي</td><td class="n">${money(sub)}</td></tr>${q.discount ? `<tr><td>الخصم</td><td class="n">${money(q.discount)}</td></tr>` : ''}<tr class="g"><td>الصافي</td><td class="n">${money(q.total)} ج.م</td></tr></table>
     ${q.notes ? `<p><b>ملاحظات:</b> ${esc(q.notes)}</p>` : ''}
-    <div class="ft">هذا العرض ساري حتى ${esc(q.valid_until)} — الأسعار قابلة للتغيير بعد هذا التاريخ. عرض السعر لا يُعد فاتورة.</div>`, false);
+    <div class="ft">هذا العرض ساري حتى ${esc(q.valid_until)} — الأسعار قابلة للتغيير بعد هذا التاريخ. عرض السعر لا يُعد فاتورة.</div>`);
+  if (asHtml) return html; printHTML(html, false);
 }
 
 /* =====================================================================
@@ -3666,6 +3716,13 @@ function docHTML(kind, d, meta) {
 }
 const docFrame = (html, lh) => `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><style>${docCSS(lh)}</style></head><body>${html}</body></html>`;
 const printDoc = (html, lh) => printHTML(html, false, docCSS(lh));
+// صورة المستند (A4) للواتساب — الفوتر والعلامة المائية جوه الورقة بدل ما يبقوا ثابتين على الشاشة
+const docImage = (html, lh) => htmlToImage(html, docCSS(lh) + '.pg{position:relative}.lf,.wm,.void{position:absolute!important}', 794, 1.6);
+const docPhone = async (d) => { if (d.phone) return d.phone; const n = String(d.to || d.from || d.party || '').trim(); if (!n || !can('customers')) return ''; const c = (await customers().catch(() => [])).find((x) => x.name === n); return (c && c.phone) || ''; };
+async function shareDoc(kind, x, lh, phone) {
+  const spec = DOCS[kind] || { t: kind }; const html = docHTML(kind, x.data || {}, { lh, branch_id: x.branch_id, no: x.doc_no, user: x.user_name, void: x.status === 'void' });
+  shareImageModal({ title: `💬 إرسال ${spec.t} ${x.doc_no || ''}`, name: `${spec.t}-${x.doc_no || 'مستند'}`, phone: phone || (await docPhone(x.data || {})), msg: `*${spec.t}* رقم ${x.doc_no || ''}`, make: () => docImage(html, lh) });
+}
 
 /* ---------- هات بيانات من السيستم: بتملى المستند من فاتورة أو عرض سعر أو عميل أو مورد أو شيكات أو النواقص ---------- */
 function chooseFrom(title, list, label, sub, onPick, empty) {
@@ -3746,7 +3803,7 @@ async function docImport(kind, spec, d, fields, sync) {
 
 /* ---------- نموذج المستند: خانات على اليمين ومعاينة حية للورقة على الشمال ---------- */
 async function docForm(kind, init = {}, existing = null, onDone) {
-  const { _br, ...init0 } = init;
+  const { _br, _phone, ...init0 } = init;
   if (!existing && !_br && !curBranch()) return toast('اختار المعرض من فوق الأول', 'bad');
   const spec = DOCS[kind]; const lh = await loadLH(); const br = existing ? existing.branch_id : _br || curBranch();
   const d = { doc_date: ymd(new Date()), items: [], terms: spec.terms ? docTerms(kind, lh) : '', vat: false, vat_rate: 14, discount: 0, ...(existing ? existing.data : {}), ...init0 };
@@ -3773,7 +3830,7 @@ async function docForm(kind, init = {}, existing = null, onDone) {
         ${spec.items.money ? `<div class="grid g3" style="gap:0 12px"><div class="field"><label class="f">خصم (ج.م)</label><input class="in" type="number" step="any" min="0" data-f="discount" value="${esc(d.discount || '')}"></div>${spec.vat ? `<label class="chk" style="align-self:end;margin-bottom:12px"><input type="checkbox" data-f="vat" ${d.vat ? 'checked' : ''}> إضافة ضريبة قيمة مضافة</label><div class="field"><label class="f">نسبة الضريبة %</label><input class="in" type="number" step="any" data-f="vat_rate" value="${esc(d.vat_rate)}"></div>` : ''}</div>` : ''}` : ''}
       ${spec.terms ? `<div class="field"><label class="f">${kind === 'quote' || kind === 'purchase_order' ? 'الشروط والأحكام' : 'الشروط / الملاحظات'} <span class="faint">(كل سطر بند — تقدر تعدّلها، والافتراضية بتتظبط من "ورق الشركة")</span></label><textarea class="in" data-f="terms" rows="4">${esc(d.terms)}</textarea></div>` : ''}
     </div><div class="docprev"><div class="small muted" style="padding:6px 10px">معاينة الورقة (A4)</div><div class="docprev-in"><iframe id="dfr" title="معاينة"></iframe></div></div></div>`,
-    buttons: [{ t: `${icon('print')} حفظ وطباعة`, cls: 'pri', fn: () => save(true) }, { t: 'حفظ', fn: () => save(false) }, { t: 'معاينة بالحجم الكامل', fn: () => { const w = window.open('', '_blank'); if (w) { w.document.write(docFrame(docHTML(kind, d, meta()), lh)); w.document.close(); } return false; } }, { t: 'إلغاء' }] });
+    buttons: [{ t: `${icon('print')} حفظ وطباعة`, cls: 'pri', fn: () => save(true) }, { t: '💬 حفظ وإرسال واتساب', fn: async () => { const r = await save(false); shareDoc(kind, r, lh, _phone || ''); } }, { t: 'حفظ', fn: () => save(false) }, { t: 'معاينة بالحجم الكامل', fn: () => { const w = window.open('', '_blank'); if (w) { w.document.write(docFrame(docHTML(kind, d, meta()), lh)); w.document.close(); } return false; } }, { t: 'إلغاء' }] });
   const mb = m.mb;
   const meta = () => ({ lh, branch_id: br, no: existing ? existing.doc_no : '', user: existing ? existing.user_name : S.user.name });
   const preview = debounce(() => { $('#dfr', mb).srcdoc = docFrame(docHTML(kind, d, meta()), lh); }, 250);
@@ -3827,7 +3884,7 @@ async function docForm(kind, init = {}, existing = null, onDone) {
     const r = existing ? await PUT('/api/documents/' + existing.id, body) : await POST('/api/documents', body);
     toast(`اتحفظ ${spec.t} رقم ${r.doc_no} ✓`, 'ok');
     if (print) printDoc(docHTML(kind, r.data, { lh, branch_id: r.branch_id, no: r.doc_no, user: r.user_name }), lh);
-    onDone && onDone(r);
+    onDone && onDone(r); return r;
   };
   renderItems(); preview();
 }
@@ -3839,7 +3896,7 @@ async function docView(id, onChange) {
   const editable = x.status === 'ok' && (isAdmin() || (x.user_id === S.user.id && x.date.slice(0, 10) === ymd(new Date())));
   const m = modal({ title: `${spec.t} ${x.doc_no}`, wide: 'xwide', body: `<div class="row" style="margin-bottom:8px;gap:10px">${x.status === 'void' ? `<span class="badge bad">ملغي${x.void_reason ? ': ' + esc(x.void_reason) : ''}</span>` : '<span class="badge ok">سليم</span>'}${brName(x.branch_id)}<span class="small muted">عمله ${esc(x.user_name || '')} — ${esc(x.date.slice(0, 16))}${x.updated_at ? ` · اتعدّل ${esc(x.updated_at.slice(0, 16))}` : ''}</span></div>
       <div class="docprev big"><div class="docprev-in"><iframe id="dvf" title="المستند"></iframe></div></div>`,
-    buttons: [{ t: `${icon('print')} طباعة`, cls: 'pri', fn: () => { printDoc(html, lh); return false; } },
+    buttons: [{ t: `${icon('print')} طباعة`, cls: 'pri', fn: () => { printDoc(html, lh); return false; } }, { t: '💬 واتساب (صورة)', fn: () => { shareDoc(x.kind, x, lh); return false; } },
       ...(editable ? [{ t: 'تعديل', fn: () => { docForm(x.kind, {}, x, () => onChange && onChange()); } }] : []),
       { t: 'نسخة جديدة منه', fn: () => { const c = { ...(x.data || {}) }; c.doc_date = ymd(new Date()); docForm(x.kind, c, null, () => onChange && onChange()); } },
       ...(isAdmin() && x.status === 'ok' ? [{ t: 'إلغاء المستند', cls: 'bad', fn: async () => { const why = await promptBox('إلغاء المستند', 'السبب (اختياري)'); if (why === null) return false; await POST(`/api/documents/${x.id}/void`, { reason: why }); toast('اتلغى — بيفضل في الأرشيف بعلامة "ملغي"', 'ok'); onChange && onChange(); } }] : []),
