@@ -1324,16 +1324,23 @@ VIEWS.pos = async (el) => {
   const ps = $('#ps', el), pg = $('#pg', el);
   // فلتر الشركة + التصنيف (بيتلفّوا على كذا سطر، وجنب كل واحد العدد)
   const brandOf = (p) => brandLabel(p.brand);
-  const brands = [...new Set(prods.map(brandOf))];
+  // الشركات مترتبة بعدد الأصناف، و"أخرى" في الآخر
+  const bCount = {}; for (const p of prods) bCount[brandOf(p)] = (bCount[brandOf(p)] || 0) + 1;
+  const brands = Object.keys(bCount).sort((a, b) => (a === 'أخرى') - (b === 'أخرى') || bCount[b] - bCount[a]);
   if (st.brand && !brands.includes(st.brand)) st.brand = '';
+  // الفلتر على مرحلتين: الشركة الأول ← وبعدين أقسامها بس (عشان مايبقاش فيه 20 قسم مرة واحدة)
   const renderFilters = () => {
+    const multi = brands.length > 1;
     const inBrand = prods.filter((p) => !st.brand || brandOf(p) === st.brand);
     const catCount = {}; for (const p of inBrand) if (p.category) catCount[p.category] = (catCount[p.category] || 0) + 1;
     if (st.cat && !catCount[st.cat]) st.cat = '';
     const catList = Object.keys(catCount).sort((a, b) => catCount[b] - catCount[a]);
-    $('#filters', el).innerHTML = (brands.length > 1 ? `<div class="chips brands">${[['', 'كل الشركات', prods.length], ...brands.map((b) => [b, b, prods.filter((p) => brandOf(p) === b).length])].map(([k, t, n]) => `<button class="chip brand ${st.brand === k ? 'on' : ''}" data-b="${esc(k)}">${esc(t)} <span class="cnt">${n}</span></button>`).join('')}</div>` : '')
-      + `<div class="chips cats ${st.catsOpen ? 'open' : ''}" id="cats"><button class="chip ${st.cat ? '' : 'on'}" data-c="">الكل <span class="cnt">${inBrand.length}</span></button>${catList.map((c) => `<button class="chip ${st.cat === c ? 'on' : ''}" data-c="${esc(c)}">${esc(c)} <span class="cnt">${catCount[c]}</span></button>`).join('')}</div>`
-      + (catList.length > 8 ? `<button class="btn sm ghost" id="catsMore" style="margin:-4px 0 6px">${st.catsOpen ? '▲ أقل' : `▼ كل التصنيفات (${catList.length})`}</button>` : '');
+    const showCats = (!multi || st.brand) && catList.length > 0;
+    $('#filters', el).innerHTML = (multi ? `<div class="chips brands">${[['', 'كل الشركات', prods.length], ...brands.map((b) => [b, b, bCount[b]])].map(([k, t, n]) => `<button class="chip brand ${st.brand === k ? 'on' : ''}" data-b="${esc(k)}">${esc(t)} <span class="cnt">${n}</span></button>`).join('')}</div>` : '')
+      + (showCats ? `<div style="${multi ? 'margin-top:8px;padding:2px 10px 4px;border-inline-start:3px solid var(--pri);background:var(--pri-soft);border-radius:10px' : ''}">
+          <div class="chips cats ${st.catsOpen ? 'open' : ''}" id="cats" style="${multi ? 'padding-top:8px' : ''}">${multi ? `<span class="small muted" style="align-self:center;font-weight:700">أقسام ${esc(st.brand)}:</span>` : ''}<button class="chip ${st.cat ? '' : 'on'}" data-c="">${multi ? 'كل ' + esc(st.brand) : 'الكل'} <span class="cnt">${inBrand.length}</span></button>${catList.map((c) => `<button class="chip ${st.cat === c ? 'on' : ''}" data-c="${esc(c)}">${esc(c)} <span class="cnt">${catCount[c]}</span></button>`).join('')}</div>
+          ${catList.length > 8 ? `<button class="btn sm ghost" id="catsMore" style="margin:0 0 4px">${st.catsOpen ? '▲ أقل' : `▼ كل أقسام ${esc(st.brand || '')} (${catList.length})`}</button>` : ''}</div>`
+        : multi ? '<div class="small faint" style="padding:6px 2px 2px">👆 اختار الشركة عشان تظهر أقسامها — أو اكتب في البحث على طول</div>' : '');
     const more = $('#catsMore', el); if (more) more.onclick = () => { st.catsOpen = !st.catsOpen; renderFilters(); };
   };
   const visible = () => { const q = ps.value.trim().toLowerCase(); return prods.filter((p) => (!st.brand || brandOf(p) === st.brand) && (!st.cat || p.category === st.cat) && (!q || prodMatch(p, q))); };
